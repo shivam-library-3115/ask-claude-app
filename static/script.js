@@ -25,11 +25,80 @@ function withAlpha(hex, alpha) {
   return hex + alpha;
 }
 
+function csvEscape(value) {
+  const s = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function slugify(text) {
+  const s = (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return s || "plush-intelligence-data";
+}
+
+function triggerCSVDownload(csvString, filenameBase) {
+  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slugify(filenameBase)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function tableSpecToCSV(spec) {
+  const lines = [(spec.columns || []).map(csvEscape).join(",")];
+  (spec.rows || []).forEach((row) => lines.push(row.map(csvEscape).join(",")));
+  return lines.join("\r\n");
+}
+
+function chartSpecToCSV(spec) {
+  const lines = [];
+  if (spec.chart_type === "scatter") {
+    lines.push(["series", "x", "y"].map(csvEscape).join(","));
+    (spec.series || []).forEach((s) => {
+      (s.data || []).forEach((pt) => {
+        lines.push([s.name || "", pt.x, pt.y].map(csvEscape).join(","));
+      });
+    });
+  } else {
+    const labels = spec.labels || [];
+    const series = spec.series || [];
+    lines.push(["label", ...series.map((s) => s.name || "")].map(csvEscape).join(","));
+    labels.forEach((label, i) => {
+      lines.push([label, ...series.map((s) => (s.data || [])[i])].map(csvEscape).join(","));
+    });
+  }
+  return lines.join("\r\n");
+}
+
+function makeCSVButton(getCSV, filenameBase) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "csv-btn";
+  btn.textContent = "Download CSV";
+  btn.addEventListener("click", () => triggerCSVDownload(getCSV(), filenameBase));
+  return btn;
+}
+
 function renderChartBlock(container, spec) {
   const wrap = document.createElement("div");
   wrap.className = "chart-block";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "chart-toolbar";
+  toolbar.appendChild(makeCSVButton(() => chartSpecToCSV(spec), spec.title || "chart-data"));
+  wrap.appendChild(toolbar);
+
+  const canvasWrap = document.createElement("div");
+  canvasWrap.className = "chart-canvas-wrap";
   const canvas = document.createElement("canvas");
-  wrap.appendChild(canvas);
+  canvasWrap.appendChild(canvas);
+  wrap.appendChild(canvasWrap);
   container.appendChild(wrap);
 
   const type = spec.chart_type;
@@ -100,12 +169,16 @@ function renderTableBlock(container, spec) {
   const wrap = document.createElement("div");
   wrap.className = "table-block";
 
+  const header = document.createElement("div");
+  header.className = "table-header";
   if (spec.title) {
     const cap = document.createElement("div");
     cap.className = "table-title";
     cap.textContent = spec.title;
-    wrap.appendChild(cap);
+    header.appendChild(cap);
   }
+  header.appendChild(makeCSVButton(() => tableSpecToCSV(spec), spec.title || "table-data"));
+  wrap.appendChild(header);
 
   const scroller = document.createElement("div");
   scroller.className = "table-scroll";
@@ -196,6 +269,10 @@ form.addEventListener("submit", async (e) => {
     });
 
     if (!response.ok || !response.body) {
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       const err = await response.json().catch(() => ({}));
       throw new Error(err.error || `Request failed (${response.status})`);
     }
