@@ -122,8 +122,10 @@ function renderTableBlock(container, spec) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  (spec.rows || []).forEach((row) => {
+  const highlighted = new Set(spec.highlight_rows || []);
+  (spec.rows || []).forEach((row, i) => {
     const tr = document.createElement("tr");
+    if (highlighted.has(i)) tr.className = "row-highlight";
     row.forEach((cell) => {
       const td = document.createElement("td");
       td.textContent = cell === null || cell === undefined || cell === "" ? "—" : String(cell);
