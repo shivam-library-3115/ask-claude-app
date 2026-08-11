@@ -24,7 +24,12 @@ MAX_TOKENS = 1500
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
 MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 5          # cap on how many query round-trips one question can take
+MAX_TOOL_STEPS = 5          # cap on how many query/render round-trips one question can take
+
+MAX_CHART_SERIES = 10
+MAX_CHART_POINTS = 500
+MAX_TABLE_ROWS = 500
+MAX_TABLE_COLS = 30
 
 SQL_TOOL = {
     "name": "run_sql_query",
@@ -44,6 +49,69 @@ SQL_TOOL = {
             }
         },
         "required": ["query"],
+    },
+}
+
+CHART_TOOL = {
+    "name": "render_chart",
+    "description": (
+        "Display a chart to the user, after you've already looked up the data with "
+        "run_sql_query. Use 'line' for a trend over time, 'bar' for comparing "
+        "categories, 'pie' for a share-of-total breakdown, and 'scatter' for the "
+        "relationship between two numeric values. Prefer this over describing "
+        "numbers in prose whenever the question is naturally visual."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "chart_type": {"type": "string", "enum": ["line", "bar", "pie", "scatter"]},
+            "title": {"type": "string"},
+            "labels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Category labels for the x-axis (line/bar) or slice names (pie). Omit for scatter.",
+            },
+            "series": {
+                "type": "array",
+                "description": "One or more data series to plot.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "data": {
+                            "description": (
+                                "For line/bar/pie: an array of numbers, same length and "
+                                "order as 'labels'. For scatter: an array of {x, y} objects."
+                            )
+                        },
+                    },
+                    "required": ["name", "data"],
+                },
+            },
+        },
+        "required": ["chart_type", "series"],
+    },
+}
+
+TABLE_TOOL = {
+    "name": "render_table",
+    "description": (
+        "Display query results as a readable table with columns and rows, instead "
+        "of writing a list of records out as text. Use this whenever the answer is "
+        "naturally multiple rows of structured data."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "columns": {"type": "array", "items": {"type": "string"}},
+            "rows": {
+                "type": "array",
+                "description": "Each item is one row: an array of cell values, in the same order as 'columns'.",
+                "items": {"type": "array"},
+            },
+        },
+        "required": ["columns", "rows"],
     },
 }
 
@@ -68,7 +136,9 @@ def is_rate_limited(ip: str) -> bool:
 
 def sse_escape(text: str) -> str:
     # SSE "data:" fields can't contain raw newlines, so encode them
-    # and decode again on the client.
+    # and decode again on the client. Only used for plain text — chart/table
+    # payloads are JSON, which is already single-line safe, and must NOT be
+    # run through this or the client's matching decode would corrupt them.
     return text.replace("\\", "\\\\").replace("\n", "\\n")
 
 
@@ -105,8 +175,8 @@ def validate_messages(raw):
 
 
 def build_system_and_tools():
-    """Schema-aware system prompt + the SQL tool — degrades gracefully to a
-    plain assistant (no tool) if the database can't be reached right now."""
+    """Schema-aware system prompt + tools — degrades gracefully to a plain
+    assistant (no tools) if the database can't be reached right now."""
     try:
         schema = db.get_schema_context()
         system = (
@@ -114,13 +184,18 @@ def build_system_and_tools():
             "Use the run_sql_query tool to look up real data before answering — "
             "never guess at numbers or rows. Only the tables and columns listed "
             "below exist; if a question needs something outside them, say so "
-            "instead of inventing it. Keep answers concise and, where useful, "
-            "summarize what the query found rather than dumping raw rows. "
+            "instead of inventing it.\n\n"
+            "When a question calls for a trend, comparison, or breakdown that's "
+            "naturally visual, call render_chart instead of describing numbers in "
+            "prose. When a question calls for a list of records or a multi-column "
+            "result, call render_table instead of writing the rows out as text. "
+            "After rendering a chart or table, add only a brief one- or "
+            "two-sentence takeaway — don't repeat the full data as text too.\n\n"
             "Never mention SQL, queries, or table/column names in your answer — "
             "the person you're talking to should just see the result.\n\n"
             "Database schema:\n" + schema
         )
-        return system, [SQL_TOOL]
+        return system, [SQL_TOOL, CHART_TOOL, TABLE_TOOL]
     except Exception as exc:
         system = (
             "You are Plush Buddy, the data assistant for Plush Intelligence. "
@@ -129,6 +204,58 @@ def build_system_and_tools():
             "guessing at any data."
         )
         return system, []
+
+
+def prepare_chart(raw_input: dict):
+    """Validate + cap a render_chart call. Returns (payload_for_client, tool_result)."""
+    chart_type = raw_input.get("chart_type")
+    if chart_type not in ("line", "bar", "pie", "scatter"):
+        return None, {"error": "chart_type must be one of: line, bar, pie, scatter."}
+
+    series = raw_input.get("series")
+    if not isinstance(series, list) or not series:
+        return None, {"error": "series must be a non-empty array."}
+
+    trimmed_series = []
+    for s in series[:MAX_CHART_SERIES]:
+        if not isinstance(s, dict):
+            continue
+        data = s.get("data")
+        if isinstance(data, list):
+            data = data[:MAX_CHART_POINTS]
+        trimmed_series.append({"name": s.get("name", ""), "data": data})
+
+    if not trimmed_series:
+        return None, {"error": "No valid series provided."}
+
+    payload = {
+        "chart_type": chart_type,
+        "title": raw_input.get("title", ""),
+        "labels": (raw_input.get("labels") or [])[:MAX_CHART_POINTS],
+        "series": trimmed_series,
+    }
+    return payload, {"status": "Chart displayed to the user."}
+
+
+def prepare_table(raw_input: dict):
+    """Validate + cap a render_table call. Returns (payload_for_client, tool_result)."""
+    columns = raw_input.get("columns")
+    rows = raw_input.get("rows")
+    if not isinstance(columns, list) or not columns:
+        return None, {"error": "columns must be a non-empty array."}
+    if not isinstance(rows, list):
+        return None, {"error": "rows must be an array."}
+
+    truncated = len(rows) > MAX_TABLE_ROWS
+    payload = {
+        "title": raw_input.get("title", ""),
+        "columns": columns[:MAX_TABLE_COLS],
+        "rows": rows[:MAX_TABLE_ROWS],
+    }
+    status = "Table displayed to the user."
+    if truncated:
+        status += f" (truncated to the first {MAX_TABLE_ROWS} rows)"
+    return payload, {"status": status}
 
 
 @app.route("/")
@@ -174,20 +301,56 @@ def ask():
 
                 tool_results = []
                 for block in tool_use_blocks:
-                    query = (block.input or {}).get("query", "")
-                    # Note: the query itself stays server-side by design — the
-                    # person using the page only ever sees this generic status.
-                    yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
-                    result = db.run_sql_query(query)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result, default=str)[:8000],
-                        "is_error": bool(isinstance(result, dict) and result.get("error")),
-                    })
+                    if block.name == "run_sql_query":
+                        query = (block.input or {}).get("query", "")
+                        # The query itself stays server-side by design — the
+                        # person using the page only ever sees this status.
+                        yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
+                        result = db.run_sql_query(query)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result, default=str)[:8000],
+                            "is_error": bool(isinstance(result, dict) and result.get("error")),
+                        })
+
+                    elif block.name == "render_chart":
+                        yield f"event: status\ndata: {sse_escape('Building chart…')}\n\n"
+                        payload, result = prepare_chart(block.input or {})
+                        if payload is not None:
+                            # JSON is already single-line-safe — do NOT sse_escape this,
+                            # that's only for the plain-text path.
+                            yield f"event: chart\ndata: {json.dumps(payload, default=str)}\n\n"
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result, default=str),
+                            "is_error": bool("error" in result),
+                        })
+
+                    elif block.name == "render_table":
+                        yield f"event: status\ndata: {sse_escape('Building table…')}\n\n"
+                        payload, result = prepare_table(block.input or {})
+                        if payload is not None:
+                            yield f"event: table\ndata: {json.dumps(payload, default=str)}\n\n"
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result, default=str),
+                            "is_error": bool("error" in result),
+                        })
+
+                    else:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps({"error": f"Unknown tool: {block.name}"}),
+                            "is_error": True,
+                        })
+
                 convo.append({"role": "user", "content": tool_results})
             else:
-                yield f"event: error\ndata: {sse_escape('This question needed too many query steps — try narrowing it.')}\n\n"
+                yield f"event: error\ndata: {sse_escape('This question needed too many steps — try narrowing it.')}\n\n"
                 return
 
             yield "event: done\ndata: {}\n\n"
