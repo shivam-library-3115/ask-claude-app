@@ -1,5 +1,6 @@
 import os
 import re
+from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, inspect, text
 
@@ -41,7 +42,7 @@ def get_engine():
         if missing:
             raise RuntimeError(f"Missing database env vars: {', '.join(missing)}")
 
-        uri = f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"
+        uri = f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{name}"
         _engine = create_engine(
             uri,
             pool_pre_ping=True,
