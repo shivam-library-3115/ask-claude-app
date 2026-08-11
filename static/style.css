@@ -130,6 +130,10 @@ main {
   color: var(--ink);
 }
 
+.a-body > * + * {
+  margin-top: 0.85rem;
+}
+
 .a-text {
   font-family: var(--font-mono);
   font-size: 0.88rem;
@@ -138,7 +142,15 @@ main {
   color: var(--ink);
 }
 
-.a-text.pending::after {
+.a-status {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  min-height: 1.2em;
+  margin-top: 0.6rem;
+}
+
+.a-status.pending::after {
   content: '▍';
   color: var(--cyan);
   text-shadow: var(--glow-cyan);
@@ -147,6 +159,69 @@ main {
 }
 
 @keyframes blink { 50% { opacity: 0; } }
+
+.chart-block {
+  padding: 0.85rem 0.85rem 0.5rem;
+  background: rgba(0, 245, 255, 0.03);
+  border: 1px solid rgba(0, 245, 255, 0.18);
+  border-radius: 6px;
+  height: 280px;
+}
+
+.chart-block canvas {
+  max-width: 100%;
+}
+
+.table-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: var(--glow-cyan);
+  margin-bottom: 0.5rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid rgba(0, 245, 255, 0.22);
+  border-radius: 6px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+th, td {
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  background: rgba(0, 245, 255, 0.08);
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  border-bottom: 1px solid rgba(0, 245, 255, 0.32);
+}
+
+td {
+  color: var(--ink);
+  border-bottom: 1px solid rgba(0, 245, 255, 0.08);
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(255, 46, 168, 0.03);
+}
+
+tbody tr:hover {
+  background: rgba(0, 245, 255, 0.06);
+}
 
 .error-text {
   font-family: var(--font-mono);
