@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plush Intelligence — Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="eyebrow">Plush Intelligence</div>
+    <h1>Sign In</h1>
+    <form method="POST" action="{{ url_for('login') }}">
+      <input type="password" name="password" placeholder="Password" autofocus required />
+      {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+      <button type="submit">Enter</button>
+    </form>
+  </div>
+</body>
+</html>
