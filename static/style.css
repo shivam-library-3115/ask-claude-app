@@ -219,6 +219,16 @@ tbody tr:nth-child(even) {
   background: rgba(255, 46, 168, 0.03);
 }
 
+tbody tr.row-highlight {
+  background: rgba(255, 46, 168, 0.14);
+  box-shadow: inset 2px 0 0 var(--magenta);
+}
+
+tbody tr.row-highlight td:first-child {
+  color: var(--magenta);
+  text-shadow: var(--glow-magenta);
+}
+
 tbody tr:hover {
   background: rgba(0, 245, 255, 0.06);
 }
