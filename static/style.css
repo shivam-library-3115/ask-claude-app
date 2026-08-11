@@ -79,9 +79,25 @@ main {
 .empty-state {
   margin-top: 3rem;
   text-align: center;
+}
+
+.empty-state .empty-hook {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  color: var(--cyan);
+  text-shadow: var(--glow-cyan);
+  margin-bottom: 0.85rem;
+}
+
+.empty-state .empty-trivia {
+  display: inline-block;
+  max-width: 420px;
   color: var(--ink-soft);
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   line-height: 1.7;
 }
 
