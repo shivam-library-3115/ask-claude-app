@@ -3,7 +3,7 @@ import os
 import time
 from collections import defaultdict, deque
 
-from flask import Flask, request, Response, render_template, stream_with_context
+from flask import Flask, request, Response, render_template, stream_with_context, session, redirect, url_for
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -18,6 +18,18 @@ if not API_KEY:
     print("WARNING: ANTHROPIC_API_KEY is not set. Add it to a .env file or your environment.")
 
 client = Anthropic(api_key=API_KEY)
+
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    print("WARNING: SECRET_KEY is not set — using a random key that changes on every "
+          "restart, which will log everyone out on every deploy. Set SECRET_KEY to "
+          "any long random string to avoid that.")
+    SECRET_KEY = os.urandom(32).hex()
+app.secret_key = SECRET_KEY
+
+SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
+if not SITE_PASSWORD:
+    print("WARNING: SITE_PASSWORD is not set — the site is NOT password protected.")
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 MAX_TOKENS = 3000
@@ -126,17 +138,19 @@ TABLE_TOOL = {
 # --- Very basic per-IP rate limiting (in-memory, single-process only) ---
 # Good enough to stop casual abuse; use Flask-Limiter or a reverse-proxy
 # rule (nginx/Cloudflare) for anything with real public traffic.
-RATE_LIMIT = 10          # requests
-RATE_WINDOW_SECONDS = 60 # per this many seconds
+RATE_LIMIT = 10                # /ask requests
+RATE_WINDOW_SECONDS = 60       # per this many seconds
+LOGIN_RATE_LIMIT = 5           # login attempts
+LOGIN_RATE_WINDOW_SECONDS = 300  # per this many seconds
 _request_log = defaultdict(deque)
 
 
-def is_rate_limited(ip: str) -> bool:
+def is_rate_limited(key: str, limit: int, window_seconds: int) -> bool:
     now = time.time()
-    log = _request_log[ip]
-    while log and now - log[0] > RATE_WINDOW_SECONDS:
+    log = _request_log[key]
+    while log and now - log[0] > window_seconds:
         log.popleft()
-    if len(log) >= RATE_LIMIT:
+    if len(log) >= limit:
         return True
     log.append(now)
     return False
@@ -279,15 +293,49 @@ def prepare_table(raw_input: dict):
     return payload, {"status": status}
 
 
+@app.before_request
+def require_login():
+    if not SITE_PASSWORD:
+        return  # no password configured — app stays open
+    if request.endpoint in ("login", "static"):
+        return
+    if session.get("authenticated"):
+        return
+    if request.endpoint == "ask":
+        return {"error": "Session expired — please refresh the page and log in again."}, 401
+    return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        if is_rate_limited(f"login:{ip}", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS):
+            error = "Too many attempts. Please wait a few minutes and try again."
+        elif SITE_PASSWORD and request.form.get("password") == SITE_PASSWORD:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        else:
+            error = "Incorrect password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", auth_enabled=bool(SITE_PASSWORD))
 
 
 @app.route("/ask", methods=["POST"])
 def ask():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
-    if is_rate_limited(ip):
+    if is_rate_limited(f"ask:{ip}", RATE_LIMIT, RATE_WINDOW_SECONDS):
         return {"error": "Too many requests. Please wait a bit and try again."}, 429
 
     data = request.get_json(silent=True) or {}
