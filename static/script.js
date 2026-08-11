@@ -40,7 +40,7 @@ form.addEventListener("submit", async (e) => {
       <div class="q-text"></div>
     </div>
     <div class="row">
-      <span class="label">Claude</span>
+      <span class="label">Plush Buddy</span>
       <div class="a-text pending"></div>
     </div>
   `;
@@ -52,6 +52,7 @@ form.addEventListener("submit", async (e) => {
   history.push({ role: "user", content: question });
 
   let fullAnswer = "";
+  let answerStarted = false;
 
   try {
     const response = await fetch("/ask", {
@@ -90,7 +91,15 @@ form.addEventListener("submit", async (e) => {
 
         if (eventType === "error") {
           throw new Error(decoded || "Something went wrong.");
+        } else if (eventType === "status") {
+          // Transient progress line (e.g. "Thinking…", "Fetching data…").
+          // Gets replaced by the next status, and wiped once real answer text starts.
+          answerEl.textContent = decoded;
         } else if (eventType !== "done") {
+          if (!answerStarted) {
+            fullAnswer = "";
+            answerStarted = true;
+          }
           fullAnswer += decoded;
           answerEl.textContent = fullAnswer;
         }
