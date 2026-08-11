@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ask — a reference desk for Claude</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Reference Desk — No. 001</div>
+  <h1>Ask</h1>
+  <p>Type a question. It goes straight to Claude.</p>
+</header>
+
+<main id="log">
+  <div class="empty-state" id="empty-state">No questions filed yet.<br>The first one starts the catalog.</div>
+</main>
+
+<form id="ask-form">
+  <div class="input-wrap">
+    <textarea id="question" rows="1" placeholder="Ask something…" required></textarea>
+    <button type="submit" id="submit-btn">Ask</button>
+  </div>
+</form>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
