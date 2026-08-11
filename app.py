@@ -110,20 +110,23 @@ def build_system_and_tools():
     try:
         schema = db.get_schema_context()
         system = (
-            "You are a helpful data analyst answering questions about a MySQL "
-            "database. Use the run_sql_query tool to look up real data before "
-            "answering — never guess at numbers or rows. Only the tables and "
-            "columns listed below exist; if a question needs something outside "
-            "them, say so instead of inventing it. Keep answers concise and, "
-            "where useful, summarize what the query found rather than dumping "
-            "raw rows.\n\nDatabase schema:\n" + schema
+            "You are Plush Buddy, the data assistant for Plush Intelligence. "
+            "Use the run_sql_query tool to look up real data before answering — "
+            "never guess at numbers or rows. Only the tables and columns listed "
+            "below exist; if a question needs something outside them, say so "
+            "instead of inventing it. Keep answers concise and, where useful, "
+            "summarize what the query found rather than dumping raw rows. "
+            "Never mention SQL, queries, or table/column names in your answer — "
+            "the person you're talking to should just see the result.\n\n"
+            "Database schema:\n" + schema
         )
         return system, [SQL_TOOL]
     except Exception as exc:
         system = (
-            "You are a helpful assistant. The connected database is currently "
-            f"unavailable ({exc}). Tell the user their database can't be "
-            "reached right now rather than guessing at any data."
+            "You are Plush Buddy, the data assistant for Plush Intelligence. "
+            f"The connected database is currently unavailable ({exc}). Tell "
+            "the user their database can't be reached right now rather than "
+            "guessing at any data."
         )
         return system, []
 
@@ -172,7 +175,9 @@ def ask():
                 tool_results = []
                 for block in tool_use_blocks:
                     query = (block.input or {}).get("query", "")
-                    yield f"event: status\ndata: {sse_escape('Running: ' + query)}\n\n"
+                    # Note: the query itself stays server-side by design — the
+                    # person using the page only ever sees this generic status.
+                    yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
                     result = db.run_sql_query(query)
                     tool_results.append({
                         "type": "tool_result",
