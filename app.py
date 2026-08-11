@@ -20,11 +20,11 @@ if not API_KEY:
 client = Anthropic(api_key=API_KEY)
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
-MAX_TOKENS = 1500
+MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
 MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 5          # cap on how many query/render round-trips one question can take
+MAX_TOOL_STEPS = 8          # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -110,6 +110,14 @@ TABLE_TOOL = {
                 "description": "Each item is one row: an array of cell values, in the same order as 'columns'.",
                 "items": {"type": "array"},
             },
+            "highlight_rows": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": (
+                    "Optional. 0-indexed row numbers to visually flag — for example, "
+                    "weekend dates when the user asks to highlight weekends."
+                ),
+            },
         },
         "required": ["columns", "rows"],
     },
@@ -188,9 +196,11 @@ def build_system_and_tools():
             "When a question calls for a trend, comparison, or breakdown that's "
             "naturally visual, call render_chart instead of describing numbers in "
             "prose. When a question calls for a list of records or a multi-column "
-            "result, call render_table instead of writing the rows out as text. "
-            "After rendering a chart or table, add only a brief one- or "
-            "two-sentence takeaway — don't repeat the full data as text too.\n\n"
+            "result, call render_table instead of writing the rows out as text — "
+            "use highlight_rows to flag specific rows the user cares about (e.g. "
+            "weekends, outliers, a particular category). After rendering a chart "
+            "or table, add only a brief one- or two-sentence takeaway — don't "
+            "repeat the full data as text too.\n\n"
             "Never mention SQL, queries, or table/column names in your answer — "
             "the person you're talking to should just see the result.\n\n"
             "Database schema:\n" + schema
@@ -247,10 +257,21 @@ def prepare_table(raw_input: dict):
         return None, {"error": "rows must be an array."}
 
     truncated = len(rows) > MAX_TABLE_ROWS
+    kept_rows = rows[:MAX_TABLE_ROWS]
+
+    raw_highlights = raw_input.get("highlight_rows")
+    highlight_rows = []
+    if isinstance(raw_highlights, list):
+        highlight_rows = sorted({
+            i for i in raw_highlights
+            if isinstance(i, int) and 0 <= i < len(kept_rows)
+        })
+
     payload = {
         "title": raw_input.get("title", ""),
         "columns": columns[:MAX_TABLE_COLS],
-        "rows": rows[:MAX_TABLE_ROWS],
+        "rows": kept_rows,
+        "highlight_rows": highlight_rows,
     }
     status = "Table displayed to the user."
     if truncated:
