@@ -165,11 +165,49 @@ main {
   background: rgba(0, 245, 255, 0.03);
   border: 1px solid rgba(0, 245, 255, 0.18);
   border-radius: 6px;
-  height: 280px;
 }
 
-.chart-block canvas {
+.chart-toolbar {
+  display: flex;
+  margin-bottom: 0.6rem;
+}
+
+.chart-canvas-wrap {
+  height: 260px;
+  position: relative;
+}
+
+.chart-canvas-wrap canvas {
   max-width: 100%;
+}
+
+.csv-btn {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--cyan);
+  border: 1px solid var(--cyan);
+  border-radius: 4px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.csv-btn:hover {
+  background: var(--cyan);
+  color: #05040f;
+  box-shadow: var(--glow-cyan);
+}
+
+.table-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .table-title {
@@ -179,7 +217,6 @@ main {
   text-transform: uppercase;
   color: var(--cyan);
   text-shadow: var(--glow-cyan);
-  margin-bottom: 0.5rem;
 }
 
 .table-scroll {
@@ -317,4 +354,111 @@ button:not(:disabled):hover {
 
 @media (prefers-reduced-motion: reduce) {
   .a-text.pending::after { animation: none; }
+}
+
+.logout-link {
+  position: fixed;
+  top: 1rem;
+  right: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border: 1px solid rgba(0, 245, 255, 0.25);
+  border-radius: 4px;
+  padding: 0.35rem 0.65rem;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  z-index: 10;
+}
+
+.logout-link:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+}
+
+.login-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  box-shadow: var(--glow-cyan), 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 2.5rem 2.25rem;
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.login-card .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--magenta);
+  text-shadow: var(--glow-magenta);
+  margin-bottom: 0.6rem;
+}
+
+.login-card h1 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.6rem;
+  color: var(--cyan);
+  text-shadow: var(--glow-cyan);
+  margin: 0 0 1.75rem;
+}
+
+.login-card input[type="password"] {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--card-border);
+  border-radius: 5px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 1.1rem;
+}
+
+.login-card input[type="password"]:focus {
+  outline: none;
+  border-color: var(--magenta);
+  box-shadow: var(--glow-magenta);
+}
+
+.login-card button {
+  width: 100%;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--cyan);
+  color: #05040f;
+  border: none;
+  border-radius: 5px;
+  padding: 0.8rem;
+  cursor: pointer;
+  box-shadow: var(--glow-cyan);
+}
+
+.login-card button:hover {
+  background: var(--magenta);
+  color: #0a0410;
+  box-shadow: var(--glow-magenta);
+}
+
+.login-error {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: #ff5470;
+  text-shadow: 0 0 6px rgba(255, 84, 112, 0.5);
+  margin: -0.4rem 0 1rem;
 }
