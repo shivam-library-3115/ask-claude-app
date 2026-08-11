@@ -12,6 +12,8 @@
 </head>
 <body>
 
+{% if auth_enabled %}<a href="{{ url_for('logout') }}" class="logout-link">Log out</a>{% endif %}
+
 <header>
   <div class="eyebrow">Plush Intelligence</div>
   <h1>Plush Buddy</h1>
