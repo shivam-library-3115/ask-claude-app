@@ -9,6 +9,54 @@ let entryCount = 0;
 
 const CHART_PALETTE = ["#00f5ff", "#ff2ea8", "#7cffb2", "#ffd166", "#b18cff", "#ff8a5b", "#5ac8fa", "#f76e6e"];
 
+const EMPTY_STATE_MESSAGES = [
+  {
+    hook: "Got a question brewing? Let's hear it.",
+    trivia: "Ancient Egyptians used softened papyrus, and ancient Greeks used wrapped lint — people have been figuring this out creatively for thousands of years.",
+  },
+  {
+    hook: "Go on, ask away.",
+    trivia: "\u201cMenstruation\u201d comes from the Latin mensis, meaning month — same root as \u201cmoon.\u201d You've been running on lunar time since day one.",
+  },
+  {
+    hook: "No questions yet — but stick around.",
+    trivia: "WWI nurses noticed that leftover war-bandage material was incredibly absorbent. That happy accident is why Kotex launched in 1920, kicking off the modern disposable pad.",
+  },
+  {
+    hook: "What's on your mind?",
+    trivia: "Stick-on pads — no belt, no pins — only went mainstream in 1969. Before that, everyone was pinning pads in place like a tiny sewing project.",
+  },
+  {
+    hook: "Type something, anything.",
+    trivia: "Inventor Mary Kenner designed an adjustable sanitary belt with a built-in moisture-proof pocket back in the 1920s. Discrimination kept it off shelves for decades — brilliant, just delayed.",
+  },
+  {
+    hook: "Ready when you are.",
+    trivia: "On average, a person menstruates around 450 times across a lifetime — roughly seven years spent quietly doing something incredible.",
+  },
+  {
+    hook: "Ask something to kick things off.",
+    trivia: "A \u201cnormal\u201d cycle can run anywhere from 21 to 35 days. There's no single right rhythm — just yours.",
+  },
+  {
+    hook: "This box won't fill itself.",
+    trivia: "The menstrual cup isn't new — Leona Chalmers patented one back in 1937, decades ahead of its comeback.",
+  },
+  {
+    hook: "Say the word.",
+    trivia: "The first tampon applicator was patented in 1929 by Earle Haas — an idea that's still basically the blueprint today.",
+  },
+  {
+    hook: "Your first question awaits.",
+    trivia: "Plenty of ancient cultures treated menstruation as sacred and powerful, not something to whisper about. Just some history worth remembering.",
+  },
+];
+
+if (emptyState) {
+  const pick = EMPTY_STATE_MESSAGES[Math.floor(Math.random() * EMPTY_STATE_MESSAGES.length)];
+  emptyState.innerHTML = `<span class="empty-hook">${pick.hook}</span><br><span class="empty-trivia">${pick.trivia}</span>`;
+}
+
 questionEl.addEventListener("input", () => {
   questionEl.style.height = "auto";
   questionEl.style.height = Math.min(questionEl.scrollHeight, 104) + "px";
