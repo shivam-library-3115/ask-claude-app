@@ -1,5 +1,7 @@
 import json
 import os
+import queue
+import threading
 import time
 from collections import defaultdict, deque
 
@@ -11,13 +13,74 @@ import db
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static_new", static_url_path="/static_new")
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 if not API_KEY:
     print("WARNING: ANTHROPIC_API_KEY is not set. Add it to a .env file or your environment.")
 
 client = Anthropic(api_key=API_KEY, max_retries=4)
+
+HEARTBEAT_INTERVAL_SECONDS = 10  # comfortably below any real-world idle-connection timeout
+
+
+def iter_with_heartbeat(iterable, interval=HEARTBEAT_INTERVAL_SECONDS):
+    """Wrap a slow-to-start, blocking iterable (e.g. stream.text_stream) so
+    that any gap longer than `interval` seconds yields ("heartbeat", None)
+    instead of leaving the connection silent. Real items are relayed with
+    no added latency the moment they arrive — this never slows down actual
+    streaming, it only fills in genuine silence. Runs the real iteration on
+    a background thread and relays it through a queue."""
+    q = queue.Queue()
+
+    def producer():
+        try:
+            for item in iterable:
+                q.put(("item", item))
+        except Exception as exc:
+            q.put(("error", exc))
+        finally:
+            q.put(("done", None))
+
+    threading.Thread(target=producer, daemon=True).start()
+
+    while True:
+        try:
+            kind, value = q.get(timeout=interval)
+        except queue.Empty:
+            yield ("heartbeat", None)
+            continue
+        if kind == "done":
+            return
+        yield (kind, value)
+
+
+def call_with_heartbeat(fn, args=(), kwargs=None, interval=HEARTBEAT_INTERVAL_SECONDS):
+    """Same idea as iter_with_heartbeat, for a single blocking call (e.g. a
+    slow SQL query) instead of a stream. Yields ("heartbeat", None) during
+    any wait longer than `interval` seconds, then ("result", value) once
+    the call actually finishes."""
+    kwargs = kwargs or {}
+    q = queue.Queue()
+
+    def worker():
+        try:
+            q.put(("result", fn(*args, **kwargs)))
+        except Exception as exc:
+            q.put(("error", exc))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    while True:
+        try:
+            kind, value = q.get(timeout=interval)
+        except queue.Empty:
+            yield ("heartbeat", None)
+            continue
+        if kind == "error":
+            raise value
+        yield ("result", value)
+        return
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
@@ -36,7 +99,7 @@ MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
 MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 150         # cap on how many query/render round-trips one question can take
+MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -362,8 +425,13 @@ def ask():
                     stream_kwargs["tools"] = tools
 
                 with client.messages.stream(**stream_kwargs) as stream:
-                    for chunk in stream.text_stream:
-                        yield f"data: {sse_escape(chunk)}\n\n"
+                    for kind, value in iter_with_heartbeat(stream.text_stream, interval=HEARTBEAT_INTERVAL_SECONDS):
+                        if kind == "heartbeat":
+                            yield ": keepalive\n\n"  # SSE comment line — ignored by the client, keeps the connection visibly alive
+                        elif kind == "error":
+                            raise value
+                        else:
+                            yield f"data: {sse_escape(value)}\n\n"
                     final = stream.get_final_message()
 
                 if final.stop_reason != "tool_use":
@@ -379,7 +447,12 @@ def ask():
                         # The query itself stays server-side by design — the
                         # person using the page only ever sees this status.
                         yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
-                        result = db.run_sql_query(query)
+                        result = None
+                        for kind, value in call_with_heartbeat(db.run_sql_query, args=(query,), interval=HEARTBEAT_INTERVAL_SECONDS):
+                            if kind == "heartbeat":
+                                yield ": keepalive\n\n"
+                            else:
+                                result = value
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
