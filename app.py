@@ -13,7 +13,7 @@ import db
 
 load_dotenv()
 
-app = Flask(__name__, static_folder="static_new", static_url_path="/static_new")
+app = Flask(__name__)
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 if not API_KEY:
