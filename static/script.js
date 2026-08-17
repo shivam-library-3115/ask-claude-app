@@ -15,6 +15,13 @@ function formatTokenCount(n) {
   return n.toLocaleString();
 }
 
+function formatINR(amount) {
+  // Per-question cost is usually well under ₹1 — show enough precision
+  // that it doesn't just read as "free". Larger amounts get normal 2dp.
+  if (amount < 1) return `₹${amount.toFixed(4)}`;
+  return `₹${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 let history = []; // {role: 'user'|'assistant', content: string}
 let entryCount = 0;
 
@@ -82,6 +89,32 @@ questionEl.addEventListener("keydown", (e) => {
 
 function withAlpha(hex, alpha) {
   return hex + alpha;
+}
+
+// Column/series names matching this look like a rate, ratio, or percentage
+// (CTR, CVR, discount %, margin, conversion rate, etc.) — those get up to 2
+// decimal places. Everything else numeric (sales, quantities, counts) is
+// treated as a whole-number amount — rounded, comma-grouped, no decimals.
+const RATE_LABEL_PATTERN = /ctr|cvr|rate|ratio|margin|discount|conversion|%|percent/i;
+
+function isNumericValue(v) {
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "string" && v.trim() !== "") return Number.isFinite(Number(v));
+  return false;
+}
+
+function formatMetricValue(value, label) {
+  const num = Number(value);
+  if (RATE_LABEL_PATTERN.test(label || "")) {
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return Math.round(num).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function formatCellDisplay(value, columnName) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (isNumericValue(value)) return formatMetricValue(value, columnName);
+  return String(value);
 }
 
 function csvEscape(value) {
@@ -193,6 +226,8 @@ function renderChartBlock(container, spec) {
     };
   }
 
+  const valueLabel = spec.y_label || (spec.series && spec.series[0] && spec.series[0].name) || "";
+
   new Chart(canvas.getContext("2d"), {
     type: type,
     data: data,
@@ -202,6 +237,15 @@ function renderChartBlock(container, spec) {
       plugins: {
         legend: {
           labels: { color: "#edf0ff", font: { family: "'JetBrains Mono', monospace", size: 11 } },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const raw = type === "scatter" ? ctx.parsed.y : ctx.parsed.y ?? ctx.parsed;
+              const seriesLabel = ctx.dataset.label || valueLabel;
+              return `${seriesLabel}: ${formatMetricValue(raw, seriesLabel)}`;
+            },
+          },
         },
         title: spec.title
           ? {
@@ -218,7 +262,13 @@ function renderChartBlock(container, spec) {
           ? {}
           : {
               x: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
-              y: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
+              y: {
+                ticks: {
+                  color: "#8d8fc0",
+                  callback: (val) => formatMetricValue(val, valueLabel),
+                },
+                grid: { color: "rgba(0,245,255,0.08)" },
+              },
             },
     },
   });
@@ -255,12 +305,13 @@ function renderTableBlock(container, spec) {
 
   const tbody = document.createElement("tbody");
   const highlighted = new Set(spec.highlight_rows || []);
+  const columns = spec.columns || [];
   (spec.rows || []).forEach((row, i) => {
     const tr = document.createElement("tr");
     if (highlighted.has(i)) tr.className = "row-highlight";
-    row.forEach((cell) => {
+    row.forEach((cell, colIndex) => {
       const td = document.createElement("td");
-      td.textContent = cell === null || cell === undefined || cell === "" ? "—" : String(cell);
+      td.textContent = formatCellDisplay(cell, columns[colIndex]);
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -431,7 +482,8 @@ form.addEventListener("submit", async (e) => {
           const usage = JSON.parse(data);
           const usageEl = document.createElement("div");
           usageEl.className = "token-usage";
-          usageEl.textContent = `${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens`;
+          usageEl.title = "Estimated from current Claude API pricing and an approximate USD→INR rate — actual billed cost may vary slightly.";
+          usageEl.textContent = `${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens · ≈${formatINR(usage.cost_inr)}`;
           answerBody.appendChild(usageEl);
         } else if (eventType !== "done") {
           appendText(decoded);
