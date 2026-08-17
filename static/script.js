@@ -3,6 +3,17 @@ const emptyState = document.getElementById("empty-state");
 const form = document.getElementById("ask-form");
 const questionEl = document.getElementById("question");
 const submitBtn = document.getElementById("submit-btn");
+const stopBtn = document.getElementById("stop-btn");
+
+let activeController = null;
+
+stopBtn.addEventListener("click", () => {
+  if (activeController) activeController.abort();
+});
+
+function formatTokenCount(n) {
+  return n.toLocaleString();
+}
 
 let history = []; // {role: 'user'|'assistant', content: string}
 let entryCount = 0;
@@ -350,11 +361,16 @@ form.addEventListener("submit", async (e) => {
     fullAnswerText += chunk;
   }
 
+  const controller = new AbortController();
+  activeController = controller;
+  stopBtn.hidden = false;
+
   try {
     const response = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: history }),
+      signal: controller.signal,
     });
 
     if (!response.ok || !response.body) {
@@ -411,6 +427,12 @@ form.addEventListener("submit", async (e) => {
           // Transient progress line, shown below whatever's rendered so far.
           statusEl.textContent = decoded;
           bumpProgress();
+        } else if (eventType === "usage") {
+          const usage = JSON.parse(data);
+          const usageEl = document.createElement("div");
+          usageEl.className = "token-usage";
+          usageEl.textContent = `${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens`;
+          answerBody.appendChild(usageEl);
         } else if (eventType !== "done") {
           appendText(decoded);
         }
@@ -425,13 +447,22 @@ form.addEventListener("submit", async (e) => {
     statusEl.classList.remove("pending");
     statusEl.textContent = "";
     finishProgress(false);
-    const errEl = document.createElement("div");
-    errEl.className = "a-text error-text";
-    errEl.textContent = `Could not reach Plush Buddy — ${err.message}`;
-    answerBody.appendChild(errEl);
-    history.pop(); // don't keep a failed turn in context
+    if (err.name === "AbortError") {
+      const stoppedEl = document.createElement("div");
+      stoppedEl.className = "a-text stopped-text";
+      stoppedEl.textContent = fullAnswerText ? "Stopped." : "Stopped before an answer was generated.";
+      answerBody.appendChild(stoppedEl);
+    } else {
+      const errEl = document.createElement("div");
+      errEl.className = "a-text error-text";
+      errEl.textContent = `Could not reach Plush Buddy — ${err.message}`;
+      answerBody.appendChild(errEl);
+    }
+    history.pop(); // don't keep a stopped or failed turn in context
   } finally {
     submitBtn.disabled = false;
+    stopBtn.hidden = true;
+    activeController = null;
     questionEl.focus();
   }
 });
