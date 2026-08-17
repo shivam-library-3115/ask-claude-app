@@ -25,6 +25,14 @@
 </main>
 
 <form id="ask-form">
+  <div class="model-row">
+    <select id="model-select" class="model-select">
+      <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fastest, cheapest</option>
+      <option value="claude-sonnet-5" selected>Sonnet 5 — balanced (default)</option>
+      <option value="claude-opus-4-8">Opus 4.8 — stronger reasoning</option>
+      <option value="claude-fable-5">Fable 5 — best available</option>
+    </select>
+  </div>
   <div class="input-wrap">
     <textarea id="question" rows="1" placeholder="Ask something…" required></textarea>
     <button type="button" id="stop-btn" class="stop-btn" hidden>Stop</button>
