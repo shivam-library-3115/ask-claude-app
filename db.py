@@ -1,11 +1,14 @@
 import os
 import re
+import time
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, inspect, text
 
 _engine = None
 _schema_cache = None
+_schema_cache_time = 0.0
+SCHEMA_CACHE_TTL_SECONDS = 300  # re-check the real schema at most every 5 minutes
 
 # Defense-in-depth on top of your read-only DB user: even if that user's
 # grants were ever misconfigured, these checks stop write/DDL statements
@@ -54,9 +57,12 @@ def get_engine():
 
 def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25) -> str:
     """Return a compact text description of the database's tables and columns,
-    used to tell Claude what it's allowed to query. Cached after first success."""
-    global _schema_cache
-    if _schema_cache is not None:
+    used to tell Claude what it's allowed to query. Cached for
+    SCHEMA_CACHE_TTL_SECONDS so new tables/columns show up on their own,
+    without needing a server restart."""
+    global _schema_cache, _schema_cache_time
+    now = time.time()
+    if _schema_cache is not None and (now - _schema_cache_time) < SCHEMA_CACHE_TTL_SECONDS:
         return _schema_cache
 
     engine = get_engine()
@@ -74,6 +80,7 @@ def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25) -> st
         schema_text += f"\n… and {len(tables) - max_tables} more tables not shown."
 
     _schema_cache = schema_text
+    _schema_cache_time = now
     return _schema_cache
 
 
