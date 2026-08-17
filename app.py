@@ -17,7 +17,7 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 if not API_KEY:
     print("WARNING: ANTHROPIC_API_KEY is not set. Add it to a .env file or your environment.")
 
-client = Anthropic(api_key=API_KEY)
+client = Anthropic(api_key=API_KEY, max_retries=4)
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
@@ -36,7 +36,7 @@ MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
 MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 8          # cap on how many query/render round-trips one question can take
+MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -217,6 +217,10 @@ def build_system_and_tools():
             "repeat the full data as text too.\n\n"
             "Never mention SQL, queries, or table/column names in your answer — "
             "the person you're talking to should just see the result.\n\n"
+            "Favor efficient SQL over many small queries: use GROUP BY, JOINs, "
+            "UNION, or CTEs to answer in one or two queries rather than looping "
+            "one query per category, channel, or time period — you have a "
+            "limited number of tool-use steps per question.\n\n"
             "Database schema:\n" + schema
         )
         return system, [SQL_TOOL, CHART_TOOL, TABLE_TOOL]
