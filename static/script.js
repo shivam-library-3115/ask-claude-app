@@ -4,6 +4,14 @@ const form = document.getElementById("ask-form");
 const questionEl = document.getElementById("question");
 const submitBtn = document.getElementById("submit-btn");
 const stopBtn = document.getElementById("stop-btn");
+const modelSelect = document.getElementById("model-select");
+
+const MODEL_DISPLAY_NAMES = {
+  "claude-haiku-4-5-20251001": "Haiku 4.5",
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-fable-5": "Fable 5",
+};
 
 let activeController = null;
 
@@ -420,7 +428,7 @@ form.addEventListener("submit", async (e) => {
     const response = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({ messages: history, model: modelSelect.value }),
       signal: controller.signal,
     });
 
@@ -483,7 +491,8 @@ form.addEventListener("submit", async (e) => {
           const usageEl = document.createElement("div");
           usageEl.className = "token-usage";
           usageEl.title = "Estimated from current Claude API pricing and an approximate USD→INR rate — actual billed cost may vary slightly.";
-          usageEl.textContent = `${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens · ≈${formatINR(usage.cost_inr)}`;
+          const modelName = MODEL_DISPLAY_NAMES[usage.model] || usage.model;
+          usageEl.textContent = `${modelName} · ${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens · ≈${formatINR(usage.cost_inr)}`;
           answerBody.appendChild(usageEl);
         } else if (eventType !== "done") {
           appendText(decoded);
