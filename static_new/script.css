@@ -372,6 +372,36 @@ button:not(:disabled):hover {
   .a-text.pending::after { animation: none; }
 }
 
+.stop-btn {
+  background: transparent;
+  color: var(--magenta);
+  border: 1px solid var(--magenta);
+  box-shadow: none;
+  margin-right: 0.5rem;
+}
+
+.stop-btn:not(:disabled):hover {
+  background: var(--magenta);
+  color: #0a0410;
+  box-shadow: var(--glow-magenta);
+}
+
+.stopped-text {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.token-usage {
+  margin-top: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  opacity: 0.7;
+}
+
 .progress-row {
   display: flex;
   align-items: center;
