@@ -1,516 +1,468 @@
-import json
-import os
-import queue
-import threading
-import time
-from collections import defaultdict, deque
+const log = document.getElementById("log");
+const emptyState = document.getElementById("empty-state");
+const form = document.getElementById("ask-form");
+const questionEl = document.getElementById("question");
+const submitBtn = document.getElementById("submit-btn");
+const stopBtn = document.getElementById("stop-btn");
 
-from flask import Flask, request, Response, render_template, stream_with_context, session, redirect, url_for
-from anthropic import Anthropic
-from dotenv import load_dotenv
+let activeController = null;
 
-import db
+stopBtn.addEventListener("click", () => {
+  if (activeController) activeController.abort();
+});
 
-load_dotenv()
+function formatTokenCount(n) {
+  return n.toLocaleString();
+}
 
-app = Flask(__name__)
+let history = []; // {role: 'user'|'assistant', content: string}
+let entryCount = 0;
 
-API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-if not API_KEY:
-    print("WARNING: ANTHROPIC_API_KEY is not set. Add it to a .env file or your environment.")
+const CHART_PALETTE = ["#00f5ff", "#ff2ea8", "#7cffb2", "#ffd166", "#b18cff", "#ff8a5b", "#5ac8fa", "#f76e6e"];
 
-client = Anthropic(api_key=API_KEY, max_retries=4)
+const EMPTY_STATE_MESSAGES = [
+  {
+    hook: "Got a question brewing? Let's hear it.",
+    trivia: "Ancient Egyptians used softened papyrus, and ancient Greeks used wrapped lint — people have been figuring this out creatively for thousands of years.",
+  },
+  {
+    hook: "Go on, ask away.",
+    trivia: "\u201cMenstruation\u201d comes from the Latin mensis, meaning month — same root as \u201cmoon.\u201d You've been running on lunar time since day one.",
+  },
+  {
+    hook: "No questions yet — but stick around.",
+    trivia: "WWI nurses noticed that leftover war-bandage material was incredibly absorbent. That happy accident is why Kotex launched in 1920, kicking off the modern disposable pad.",
+  },
+  {
+    hook: "What's on your mind?",
+    trivia: "Stick-on pads — no belt, no pins — only went mainstream in 1969. Before that, everyone was pinning pads in place like a tiny sewing project.",
+  },
+  {
+    hook: "Type something, anything.",
+    trivia: "Inventor Mary Kenner designed an adjustable sanitary belt with a built-in moisture-proof pocket back in the 1920s. Discrimination kept it off shelves for decades — brilliant, just delayed.",
+  },
+  {
+    hook: "Ready when you are.",
+    trivia: "On average, a person menstruates around 450 times across a lifetime — roughly seven years spent quietly doing something incredible.",
+  },
+  {
+    hook: "Ask something to kick things off.",
+    trivia: "A \u201cnormal\u201d cycle can run anywhere from 21 to 35 days. There's no single right rhythm — just yours.",
+  },
+  {
+    hook: "This box won't fill itself.",
+    trivia: "The menstrual cup isn't new — Leona Chalmers patented one back in 1937, decades ahead of its comeback.",
+  },
+  {
+    hook: "Say the word.",
+    trivia: "The first tampon applicator was patented in 1929 by Earle Haas — an idea that's still basically the blueprint today.",
+  },
+  {
+    hook: "Your first question awaits.",
+    trivia: "Plenty of ancient cultures treated menstruation as sacred and powerful, not something to whisper about. Just some history worth remembering.",
+  },
+];
 
-HEARTBEAT_INTERVAL_SECONDS = 10  # comfortably below any real-world idle-connection timeout
+if (emptyState) {
+  const pick = EMPTY_STATE_MESSAGES[Math.floor(Math.random() * EMPTY_STATE_MESSAGES.length)];
+  emptyState.innerHTML = `<span class="empty-hook">${pick.hook}</span><br><span class="empty-trivia">${pick.trivia}</span>`;
+}
 
+questionEl.addEventListener("input", () => {
+  questionEl.style.height = "auto";
+  questionEl.style.height = Math.min(questionEl.scrollHeight, 104) + "px";
+});
 
-def iter_with_heartbeat(iterable, interval=HEARTBEAT_INTERVAL_SECONDS):
-    """Wrap a slow-to-start, blocking iterable (e.g. stream.text_stream) so
-    that any gap longer than `interval` seconds yields ("heartbeat", None)
-    instead of leaving the connection silent. Real items are relayed with
-    no added latency the moment they arrive — this never slows down actual
-    streaming, it only fills in genuine silence. Runs the real iteration on
-    a background thread and relays it through a queue."""
-    q = queue.Queue()
+questionEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
 
-    def producer():
-        try:
-            for item in iterable:
-                q.put(("item", item))
-        except Exception as exc:
-            q.put(("error", exc))
-        finally:
-            q.put(("done", None))
+function withAlpha(hex, alpha) {
+  return hex + alpha;
+}
 
-    threading.Thread(target=producer, daemon=True).start()
+function csvEscape(value) {
+  const s = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
 
-    while True:
-        try:
-            kind, value = q.get(timeout=interval)
-        except queue.Empty:
-            yield ("heartbeat", None)
-            continue
-        if kind == "done":
-            return
-        yield (kind, value)
+function slugify(text) {
+  const s = (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return s || "plush-intelligence-data";
+}
 
+function triggerCSVDownload(csvString, filenameBase) {
+  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slugify(filenameBase)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
-def call_with_heartbeat(fn, args=(), kwargs=None, interval=HEARTBEAT_INTERVAL_SECONDS):
-    """Same idea as iter_with_heartbeat, for a single blocking call (e.g. a
-    slow SQL query) instead of a stream. Yields ("heartbeat", None) during
-    any wait longer than `interval` seconds, then ("result", value) once
-    the call actually finishes."""
-    kwargs = kwargs or {}
-    q = queue.Queue()
+function tableSpecToCSV(spec) {
+  const lines = [(spec.columns || []).map(csvEscape).join(",")];
+  (spec.rows || []).forEach((row) => lines.push(row.map(csvEscape).join(",")));
+  return lines.join("\r\n");
+}
 
-    def worker():
-        try:
-            q.put(("result", fn(*args, **kwargs)))
-        except Exception as exc:
-            q.put(("error", exc))
+function chartSpecToCSV(spec) {
+  const lines = [];
+  if (spec.chart_type === "scatter") {
+    lines.push(["series", "x", "y"].map(csvEscape).join(","));
+    (spec.series || []).forEach((s) => {
+      (s.data || []).forEach((pt) => {
+        lines.push([s.name || "", pt.x, pt.y].map(csvEscape).join(","));
+      });
+    });
+  } else {
+    const labels = spec.labels || [];
+    const series = spec.series || [];
+    lines.push(["label", ...series.map((s) => s.name || "")].map(csvEscape).join(","));
+    labels.forEach((label, i) => {
+      lines.push([label, ...series.map((s) => (s.data || [])[i])].map(csvEscape).join(","));
+    });
+  }
+  return lines.join("\r\n");
+}
 
-    threading.Thread(target=worker, daemon=True).start()
+function makeCSVButton(getCSV, filenameBase) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "csv-btn";
+  btn.textContent = "Download CSV";
+  btn.addEventListener("click", () => triggerCSVDownload(getCSV(), filenameBase));
+  return btn;
+}
 
-    while True:
-        try:
-            kind, value = q.get(timeout=interval)
-        except queue.Empty:
-            yield ("heartbeat", None)
-            continue
-        if kind == "error":
-            raise value
-        yield ("result", value)
-        return
+function renderChartBlock(container, spec) {
+  const wrap = document.createElement("div");
+  wrap.className = "chart-block";
 
-SECRET_KEY = os.environ.get("SECRET_KEY")
-if not SECRET_KEY:
-    print("WARNING: SECRET_KEY is not set — using a random key that changes on every "
-          "restart, which will log everyone out on every deploy. Set SECRET_KEY to "
-          "any long random string to avoid that.")
-    SECRET_KEY = os.urandom(32).hex()
-app.secret_key = SECRET_KEY
+  const toolbar = document.createElement("div");
+  toolbar.className = "chart-toolbar";
+  toolbar.appendChild(makeCSVButton(() => chartSpecToCSV(spec), spec.title || "chart-data"));
+  wrap.appendChild(toolbar);
 
-SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
-if not SITE_PASSWORD:
-    print("WARNING: SITE_PASSWORD is not set — the site is NOT password protected.")
+  const canvasWrap = document.createElement("div");
+  canvasWrap.className = "chart-canvas-wrap";
+  const canvas = document.createElement("canvas");
+  canvasWrap.appendChild(canvas);
+  wrap.appendChild(canvasWrap);
+  container.appendChild(wrap);
 
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
-MAX_TOKENS = 3000
-MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
-MAX_MESSAGE_CHARS = 4000    # cap per message
-MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
+  const type = spec.chart_type;
+  let data;
 
-MAX_CHART_SERIES = 10
-MAX_CHART_POINTS = 500
-MAX_TABLE_ROWS = 500
-MAX_TABLE_COLS = 30
+  if (type === "scatter") {
+    data = {
+      datasets: (spec.series || []).map((s, i) => {
+        const color = CHART_PALETTE[i % CHART_PALETTE.length];
+        return {
+          label: s.name || `Series ${i + 1}`,
+          data: (s.data || []).map((pt) => ({ x: pt.x, y: pt.y })),
+          backgroundColor: color,
+          borderColor: color,
+        };
+      }),
+    };
+  } else {
+    data = {
+      labels: spec.labels || [],
+      datasets: (spec.series || []).map((s, i) => {
+        const color = CHART_PALETTE[i % CHART_PALETTE.length];
+        return {
+          label: s.name || `Series ${i + 1}`,
+          data: s.data || [],
+          backgroundColor: type === "pie" ? CHART_PALETTE : withAlpha(color, "33"),
+          borderColor: type === "pie" ? "#0d0b22" : color,
+          borderWidth: type === "pie" ? 2 : 2,
+          tension: 0.3,
+          fill: type === "line",
+        };
+      }),
+    };
+  }
 
-SQL_TOOL = {
-    "name": "run_sql_query",
-    "description": (
-        "Run a single read-only SQL SELECT statement against the connected "
-        "MySQL database and return the matching rows. Use it to look up "
-        "whatever data you need to answer the question. You may call it "
-        "more than once — for example, to check a table's shape before "
-        "writing the real query, or to refine a query after seeing results."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "A single SELECT (or WITH ... SELECT) statement. No INSERT/UPDATE/DELETE/DDL.",
+  new Chart(canvas.getContext("2d"), {
+    type: type,
+    data: data,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: "#edf0ff", font: { family: "'JetBrains Mono', monospace", size: 11 } },
+        },
+        title: spec.title
+          ? {
+              display: true,
+              text: spec.title,
+              color: "#00f5ff",
+              font: { family: "'Orbitron', sans-serif", size: 13, weight: "700" },
+              padding: { bottom: 12 },
             }
-        },
-        "required": ["query"],
+          : { display: false },
+      },
+      scales:
+        type === "pie"
+          ? {}
+          : {
+              x: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
+              y: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
+            },
     },
+  });
 }
 
-CHART_TOOL = {
-    "name": "render_chart",
-    "description": (
-        "Display a chart to the user, after you've already looked up the data with "
-        "run_sql_query. Use 'line' for a trend over time, 'bar' for comparing "
-        "categories, 'pie' for a share-of-total breakdown, and 'scatter' for the "
-        "relationship between two numeric values. Prefer this over describing "
-        "numbers in prose whenever the question is naturally visual."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "chart_type": {"type": "string", "enum": ["line", "bar", "pie", "scatter"]},
-            "title": {"type": "string"},
-            "labels": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Category labels for the x-axis (line/bar) or slice names (pie). Omit for scatter.",
-            },
-            "series": {
-                "type": "array",
-                "description": "One or more data series to plot.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "data": {
-                            "description": (
-                                "For line/bar/pie: an array of numbers, same length and "
-                                "order as 'labels'. For scatter: an array of {x, y} objects."
-                            )
-                        },
-                    },
-                    "required": ["name", "data"],
-                },
-            },
-        },
-        "required": ["chart_type", "series"],
-    },
+function renderTableBlock(container, spec) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-block";
+
+  const header = document.createElement("div");
+  header.className = "table-header";
+  if (spec.title) {
+    const cap = document.createElement("div");
+    cap.className = "table-title";
+    cap.textContent = spec.title;
+    header.appendChild(cap);
+  }
+  header.appendChild(makeCSVButton(() => tableSpecToCSV(spec), spec.title || "table-data"));
+  wrap.appendChild(header);
+
+  const scroller = document.createElement("div");
+  scroller.className = "table-scroll";
+  const table = document.createElement("table");
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  (spec.columns || []).forEach((col) => {
+    const th = document.createElement("th");
+    th.textContent = col;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const highlighted = new Set(spec.highlight_rows || []);
+  (spec.rows || []).forEach((row, i) => {
+    const tr = document.createElement("tr");
+    if (highlighted.has(i)) tr.className = "row-highlight";
+    row.forEach((cell) => {
+      const td = document.createElement("td");
+      td.textContent = cell === null || cell === undefined || cell === "" ? "—" : String(cell);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  scroller.appendChild(table);
+  wrap.appendChild(scroller);
+  container.appendChild(wrap);
 }
 
-TABLE_TOOL = {
-    "name": "render_table",
-    "description": (
-        "Display query results as a readable table with columns and rows, instead "
-        "of writing a list of records out as text. Use this whenever the answer is "
-        "naturally multiple rows of structured data."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "columns": {"type": "array", "items": {"type": "string"}},
-            "rows": {
-                "type": "array",
-                "description": "Each item is one row: an array of cell values, in the same order as 'columns'.",
-                "items": {"type": "array"},
-            },
-            "highlight_rows": {
-                "type": "array",
-                "items": {"type": "integer"},
-                "description": (
-                    "Optional. 0-indexed row numbers to visually flag — for example, "
-                    "weekend dates when the user asks to highlight weekends."
-                ),
-            },
-        },
-        "required": ["columns", "rows"],
-    },
-}
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = questionEl.value.trim();
+  if (!question || submitBtn.disabled) return;
 
-# --- Very basic per-IP rate limiting (in-memory, single-process only) ---
-# Good enough to stop casual abuse; use Flask-Limiter or a reverse-proxy
-# rule (nginx/Cloudflare) for anything with real public traffic.
-RATE_LIMIT = 10                # /ask requests
-RATE_WINDOW_SECONDS = 60       # per this many seconds
-LOGIN_RATE_LIMIT = 5           # login attempts
-LOGIN_RATE_WINDOW_SECONDS = 300  # per this many seconds
-_request_log = defaultdict(deque)
+  questionEl.value = "";
+  questionEl.style.height = "auto";
+  submitBtn.disabled = true;
 
+  if (emptyState) emptyState.remove();
 
-def is_rate_limited(key: str, limit: int, window_seconds: int) -> bool:
-    now = time.time()
-    log = _request_log[key]
-    while log and now - log[0] > window_seconds:
-        log.popleft()
-    if len(log) >= limit:
-        return True
-    log.append(now)
-    return False
+  entryCount += 1;
+  const entry = document.createElement("div");
+  entry.className = "entry";
+  entry.setAttribute("data-num", String(entryCount).padStart(3, "0"));
+  entry.innerHTML = `
+    <div class="row">
+      <span class="label">Question</span>
+      <div class="q-text"></div>
+    </div>
+    <div class="row">
+      <span class="label">Plush Buddy</span>
+      <div class="progress-row">
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <div class="query-timer">0.0s</div>
+      </div>
+      <div class="a-body"></div>
+      <div class="a-status pending"></div>
+    </div>
+  `;
+  entry.querySelector(".q-text").textContent = question;
+  log.appendChild(entry);
+  entry.scrollIntoView({ behavior: "smooth", block: "start" });
 
+  const answerBody = entry.querySelector(".a-body");
+  const statusEl = entry.querySelector(".a-status");
+  const progressRow = entry.querySelector(".progress-row");
+  const progressFill = entry.querySelector(".progress-fill");
+  const timerEl = entry.querySelector(".query-timer");
+  history.push({ role: "user", content: question });
 
-def sse_escape(text: str) -> str:
-    # SSE "data:" fields can't contain raw newlines, so encode them
-    # and decode again on the client. Only used for plain text — chart/table
-    # payloads are JSON, which is already single-line safe, and must NOT be
-    # run through this or the client's matching decode would corrupt them.
-    return text.replace("\\", "\\\\").replace("\n", "\\n")
+  // The timer is exact — real elapsed time, updated live. The bar is
+  // deliberately NOT a fake "estimated %" — we have no way to know how
+  // many steps a question will actually need up front. Instead it eases
+  // toward ~92% and only advances further on a genuine event (a new
+  // status update = a real step actually completed), then snaps to 100%
+  // only once the answer has truly finished.
+  const startTime = performance.now();
+  let progress = 8;
+  progressFill.style.width = progress + "%";
+  const timerInterval = setInterval(() => {
+    timerEl.textContent = ((performance.now() - startTime) / 1000).toFixed(1) + "s";
+  }, 100);
 
+  function bumpProgress() {
+    progress += (92 - progress) * 0.3;
+    progressFill.style.width = progress + "%";
+  }
 
-def validate_messages(raw):
-    """Validate the client-supplied conversation array. Returns (messages, error)."""
-    if not isinstance(raw, list) or not raw:
-        return None, "Please include a non-empty 'messages' array."
-    if len(raw) > MAX_MESSAGES:
-        return None, f"Conversation is too long (max {MAX_MESSAGES} turns) — start a new one."
-
-    cleaned = []
-    total_chars = 0
-    for item in raw:
-        if not isinstance(item, dict):
-            return None, "Each message must be an object with 'role' and 'content'."
-        role = item.get("role")
-        content = item.get("content")
-        if role not in ("user", "assistant") or not isinstance(content, str):
-            return None, "Each message needs role 'user' or 'assistant' and string content."
-        content = content.strip()
-        if not content:
-            return None, "Message content can't be empty."
-        if len(content) > MAX_MESSAGE_CHARS:
-            return None, f"A message is too long (max {MAX_MESSAGE_CHARS} characters)."
-        total_chars += len(content)
-        cleaned.append({"role": role, "content": content})
-
-    if total_chars > MAX_TOTAL_CHARS:
-        return None, "Conversation is too long overall — start a new one."
-    if cleaned[-1]["role"] != "user":
-        return None, "The last message must be from the user."
-
-    return cleaned, None
-
-
-def build_system_and_tools():
-    """Schema-aware system prompt + tools — degrades gracefully to a plain
-    assistant (no tools) if the database can't be reached right now."""
-    try:
-        schema = db.get_schema_context()
-        system = (
-            "You are Plush Buddy, the data assistant for Plush Intelligence. "
-            "Use the run_sql_query tool to look up real data before answering — "
-            "never guess at numbers or rows. Only the tables and columns listed "
-            "below exist; if a question needs something outside them, say so "
-            "instead of inventing it.\n\n"
-            "When a question calls for a trend, comparison, or breakdown that's "
-            "naturally visual, call render_chart instead of describing numbers in "
-            "prose. When a question calls for a list of records or a multi-column "
-            "result, call render_table instead of writing the rows out as text — "
-            "use highlight_rows to flag specific rows the user cares about (e.g. "
-            "weekends, outliers, a particular category). After rendering a chart "
-            "or table, add only a brief one- or two-sentence takeaway — don't "
-            "repeat the full data as text too.\n\n"
-            "Never mention SQL, queries, or table/column names in your answer — "
-            "the person you're talking to should just see the result.\n\n"
-            "Favor efficient SQL over many small queries: use GROUP BY, JOINs, "
-            "UNION, or CTEs to answer in one or two queries rather than looping "
-            "one query per category, channel, or time period — you have a "
-            "limited number of tool-use steps per question.\n\n"
-            "Database schema:\n" + schema
-        )
-        return system, [SQL_TOOL, CHART_TOOL, TABLE_TOOL]
-    except Exception as exc:
-        system = (
-            "You are Plush Buddy, the data assistant for Plush Intelligence. "
-            f"The connected database is currently unavailable ({exc}). Tell "
-            "the user their database can't be reached right now rather than "
-            "guessing at any data."
-        )
-        return system, []
-
-
-def prepare_chart(raw_input: dict):
-    """Validate + cap a render_chart call. Returns (payload_for_client, tool_result)."""
-    chart_type = raw_input.get("chart_type")
-    if chart_type not in ("line", "bar", "pie", "scatter"):
-        return None, {"error": "chart_type must be one of: line, bar, pie, scatter."}
-
-    series = raw_input.get("series")
-    if not isinstance(series, list) or not series:
-        return None, {"error": "series must be a non-empty array."}
-
-    trimmed_series = []
-    for s in series[:MAX_CHART_SERIES]:
-        if not isinstance(s, dict):
-            continue
-        data = s.get("data")
-        if isinstance(data, list):
-            data = data[:MAX_CHART_POINTS]
-        trimmed_series.append({"name": s.get("name", ""), "data": data})
-
-    if not trimmed_series:
-        return None, {"error": "No valid series provided."}
-
-    payload = {
-        "chart_type": chart_type,
-        "title": raw_input.get("title", ""),
-        "labels": (raw_input.get("labels") or [])[:MAX_CHART_POINTS],
-        "series": trimmed_series,
+  function finishProgress(succeeded) {
+    clearInterval(timerInterval);
+    const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+    if (succeeded) {
+      progressFill.style.width = "100%";
+      timerEl.textContent = elapsed + "s";
+      setTimeout(() => {
+        progressRow.style.opacity = "0";
+        setTimeout(() => progressRow.remove(), 400);
+      }, 500);
+    } else {
+      progressRow.style.opacity = "0";
+      setTimeout(() => progressRow.remove(), 400);
     }
-    return payload, {"status": "Chart displayed to the user."}
+  }
 
+  let fullAnswerText = ""; // plain-text portion only, for conversation history
+  let currentTextEl = null; // the open text block, or null if the last thing rendered wasn't text
 
-def prepare_table(raw_input: dict):
-    """Validate + cap a render_table call. Returns (payload_for_client, tool_result)."""
-    columns = raw_input.get("columns")
-    rows = raw_input.get("rows")
-    if not isinstance(columns, list) or not columns:
-        return None, {"error": "columns must be a non-empty array."}
-    if not isinstance(rows, list):
-        return None, {"error": "rows must be an array."}
-
-    truncated = len(rows) > MAX_TABLE_ROWS
-    kept_rows = rows[:MAX_TABLE_ROWS]
-
-    raw_highlights = raw_input.get("highlight_rows")
-    highlight_rows = []
-    if isinstance(raw_highlights, list):
-        highlight_rows = sorted({
-            i for i in raw_highlights
-            if isinstance(i, int) and 0 <= i < len(kept_rows)
-        })
-
-    payload = {
-        "title": raw_input.get("title", ""),
-        "columns": columns[:MAX_TABLE_COLS],
-        "rows": kept_rows,
-        "highlight_rows": highlight_rows,
+  function appendText(chunk) {
+    statusEl.textContent = "";
+    if (!currentTextEl) {
+      currentTextEl = document.createElement("div");
+      currentTextEl.className = "a-text";
+      answerBody.appendChild(currentTextEl);
     }
-    status = "Table displayed to the user."
-    if truncated:
-        status += f" (truncated to the first {MAX_TABLE_ROWS} rows)"
-    return payload, {"status": status}
+    currentTextEl.textContent += chunk;
+    fullAnswerText += chunk;
+  }
 
+  const controller = new AbortController();
+  activeController = controller;
+  stopBtn.hidden = false;
 
-@app.before_request
-def require_login():
-    if not SITE_PASSWORD:
-        return  # no password configured — app stays open
-    if request.endpoint in ("login", "static"):
-        return
-    if session.get("authenticated"):
-        return
-    if request.endpoint == "ask":
-        return {"error": "Session expired — please refresh the page and log in again."}, 401
-    return redirect(url_for("login"))
+  try {
+    const response = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+      signal: controller.signal,
+    });
 
+    if (!response.ok || !response.body) {
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Request failed (${response.status})`);
+    }
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    error = None
-    if request.method == "POST":
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
-        if is_rate_limited(f"login:{ip}", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS):
-            error = "Too many attempts. Please wait a few minutes and try again."
-        elif SITE_PASSWORD and request.form.get("password") == SITE_PASSWORD:
-            session["authenticated"] = True
-            return redirect(url_for("index"))
-        else:
-            error = "Incorrect password."
-    return render_template("login.html", error=error)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop(); // keep any incomplete event for next read
 
+      for (const raw of chunks) {
+        if (!raw.trim()) continue;
+        if (raw.startsWith(":")) continue; // SSE comment line (heartbeat) — not a real event, ignore entirely
 
-@app.route("/")
-def index():
-    return render_template("index.html", auth_enabled=bool(SITE_PASSWORD))
+        let eventType = "message";
+        let data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event:")) eventType = line.slice(6).trim();
+          if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
 
+        if (eventType === "chart" || eventType === "table") {
+          // JSON payload — sent raw by the server, do NOT run the text decode below on it.
+          currentTextEl = null; // next text chunk (if any) starts a fresh block below this
+          statusEl.textContent = "";
+          bumpProgress();
+          const spec = JSON.parse(data);
+          if (eventType === "chart") {
+            renderChartBlock(answerBody, spec);
+          } else {
+            renderTableBlock(answerBody, spec);
+          }
+          continue;
+        }
 
-@app.route("/ask", methods=["POST"])
-def ask():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
-    if is_rate_limited(f"ask:{ip}", RATE_LIMIT, RATE_WINDOW_SECONDS):
-        return {"error": "Too many requests. Please wait a bit and try again."}, 429
+        const decoded = data.replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
 
-    data = request.get_json(silent=True) or {}
-    messages, error = validate_messages(data.get("messages"))
-    if error:
-        return {"error": error}, 400
-    if not API_KEY:
-        return {"error": "Server is missing ANTHROPIC_API_KEY."}, 500
+        if (eventType === "error") {
+          throw new Error(decoded || "Something went wrong.");
+        } else if (eventType === "status") {
+          // Transient progress line, shown below whatever's rendered so far.
+          statusEl.textContent = decoded;
+          bumpProgress();
+        } else if (eventType === "usage") {
+          const usage = JSON.parse(data);
+          const usageEl = document.createElement("div");
+          usageEl.className = "token-usage";
+          usageEl.textContent = `${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens`;
+          answerBody.appendChild(usageEl);
+        } else if (eventType !== "done") {
+          appendText(decoded);
+        }
+      }
+    }
 
-    def generate():
-        try:
-            system, tools = build_system_and_tools()
-            convo = list(messages)  # local copy — tool turns never go back to the client
-
-            for step in range(MAX_TOOL_STEPS):
-                yield f"event: status\ndata: {sse_escape('Reviewing results…' if step else 'Thinking…')}\n\n"
-
-                stream_kwargs = dict(model=MODEL, max_tokens=MAX_TOKENS, system=system, messages=convo)
-                if tools:
-                    stream_kwargs["tools"] = tools
-
-                with client.messages.stream(**stream_kwargs) as stream:
-                    for kind, value in iter_with_heartbeat(stream.text_stream, interval=HEARTBEAT_INTERVAL_SECONDS):
-                        if kind == "heartbeat":
-                            yield ": keepalive\n\n"  # SSE comment line — ignored by the client, keeps the connection visibly alive
-                        elif kind == "error":
-                            raise value
-                        else:
-                            yield f"data: {sse_escape(value)}\n\n"
-                    final = stream.get_final_message()
-
-                if final.stop_reason != "tool_use":
-                    break
-
-                tool_use_blocks = [b for b in final.content if b.type == "tool_use"]
-                convo.append({"role": "assistant", "content": final.content})
-
-                tool_results = []
-                for block in tool_use_blocks:
-                    if block.name == "run_sql_query":
-                        query = (block.input or {}).get("query", "")
-                        # The query itself stays server-side by design — the
-                        # person using the page only ever sees this status.
-                        yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
-                        result = None
-                        for kind, value in call_with_heartbeat(db.run_sql_query, args=(query,), interval=HEARTBEAT_INTERVAL_SECONDS):
-                            if kind == "heartbeat":
-                                yield ": keepalive\n\n"
-                            else:
-                                result = value
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result, default=str)[:8000],
-                            "is_error": bool(isinstance(result, dict) and result.get("error")),
-                        })
-
-                    elif block.name == "render_chart":
-                        yield f"event: status\ndata: {sse_escape('Building chart…')}\n\n"
-                        payload, result = prepare_chart(block.input or {})
-                        if payload is not None:
-                            # JSON is already single-line-safe — do NOT sse_escape this,
-                            # that's only for the plain-text path.
-                            yield f"event: chart\ndata: {json.dumps(payload, default=str)}\n\n"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result, default=str),
-                            "is_error": bool("error" in result),
-                        })
-
-                    elif block.name == "render_table":
-                        yield f"event: status\ndata: {sse_escape('Building table…')}\n\n"
-                        payload, result = prepare_table(block.input or {})
-                        if payload is not None:
-                            yield f"event: table\ndata: {json.dumps(payload, default=str)}\n\n"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result, default=str),
-                            "is_error": bool("error" in result),
-                        })
-
-                    else:
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps({"error": f"Unknown tool: {block.name}"}),
-                            "is_error": True,
-                        })
-
-                convo.append({"role": "user", "content": tool_results})
-            else:
-                yield f"event: error\ndata: {sse_escape('This question needed too many steps — try narrowing it.')}\n\n"
-                return
-
-            yield "event: done\ndata: {}\n\n"
-        except Exception as exc:
-            yield f"event: error\ndata: {sse_escape(str(exc))}\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    debug = os.environ.get("FLASK_DEBUG", "1") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    statusEl.classList.remove("pending");
+    statusEl.textContent = "";
+    finishProgress(true);
+    history.push({ role: "assistant", content: fullAnswerText || "(see chart/table above)" });
+  } catch (err) {
+    statusEl.classList.remove("pending");
+    statusEl.textContent = "";
+    finishProgress(false);
+    if (err.name === "AbortError") {
+      const stoppedEl = document.createElement("div");
+      stoppedEl.className = "a-text stopped-text";
+      stoppedEl.textContent = fullAnswerText ? "Stopped." : "Stopped before an answer was generated.";
+      answerBody.appendChild(stoppedEl);
+    } else {
+      const errEl = document.createElement("div");
+      errEl.className = "a-text error-text";
+      errEl.textContent = `Could not reach Plush Buddy — ${err.message}`;
+      answerBody.appendChild(errEl);
+    }
+    history.pop(); // don't keep a stopped or failed turn in context
+  } finally {
+    submitBtn.disabled = false;
+    stopBtn.hidden = true;
+    activeController = null;
+    questionEl.focus();
+  }
+});
