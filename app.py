@@ -103,6 +103,8 @@ MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 MODEL_PRICING_USD_PER_MTOK = {
     "claude-sonnet-5": {"input": 2.0, "output": 10.0},
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
+    "claude-opus-4-8": {"input": 5.0, "output": 25.0},
+    "claude-fable-5": {"input": 10.0, "output": 50.0},
 }
 DEFAULT_PRICING = MODEL_PRICING_USD_PER_MTOK["claude-sonnet-5"]
 
@@ -433,6 +435,9 @@ def ask():
     if not API_KEY:
         return {"error": "Server is missing ANTHROPIC_API_KEY."}, 500
 
+    requested_model = data.get("model")
+    selected_model = requested_model if requested_model in MODEL_PRICING_USD_PER_MTOK else MODEL
+
     def generate():
         try:
             system, tools = build_system_and_tools()
@@ -443,7 +448,7 @@ def ask():
             for step in range(MAX_TOOL_STEPS):
                 yield f"event: status\ndata: {sse_escape('Reviewing results…' if step else 'Thinking…')}\n\n"
 
-                stream_kwargs = dict(model=MODEL, max_tokens=MAX_TOKENS, system=system, messages=convo)
+                stream_kwargs = dict(model=selected_model, max_tokens=MAX_TOKENS, system=system, messages=convo)
                 if tools:
                     stream_kwargs["tools"] = tools
 
@@ -527,11 +532,12 @@ def ask():
                 yield f"event: error\ndata: {sse_escape('This question needed too many steps — try narrowing it.')}\n\n"
                 return
 
-            pricing = MODEL_PRICING_USD_PER_MTOK.get(MODEL, DEFAULT_PRICING)
+            pricing = MODEL_PRICING_USD_PER_MTOK.get(selected_model, DEFAULT_PRICING)
             cost_usd = (total_input_tokens / 1_000_000 * pricing["input"]) + (
                 total_output_tokens / 1_000_000 * pricing["output"]
             )
             usage_payload = {
+                "model": selected_model,
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
                 "cost_inr": round(cost_usd * USD_TO_INR_RATE, 4),
