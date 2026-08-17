@@ -95,6 +95,20 @@ if not SITE_PASSWORD:
     print("WARNING: SITE_PASSWORD is not set — the site is NOT password protected.")
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
+
+# USD price per million tokens. Covers the models this app is likely to use;
+# unrecognized models fall back to Sonnet 5 pricing. Verify/update at
+# https://platform.claude.com/docs/en/about-claude/pricing if you switch models
+# or Anthropic's rates change.
+MODEL_PRICING_USD_PER_MTOK = {
+    "claude-sonnet-5": {"input": 2.0, "output": 10.0},
+    "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
+}
+DEFAULT_PRICING = MODEL_PRICING_USD_PER_MTOK["claude-sonnet-5"]
+
+# Approximate — exchange rates drift. Override with a real-time source, or
+# just update this number occasionally, via the USD_TO_INR_RATE env var.
+USD_TO_INR_RATE = float(os.environ.get("USD_TO_INR_RATE", "95.6"))
 MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
@@ -280,6 +294,13 @@ def build_system_and_tools():
             "repeat the full data as text too.\n\n"
             "Never mention SQL, queries, or table/column names in your answer — "
             "the person you're talking to should just see the result.\n\n"
+            "When writing numbers, whether in prose or in charts/tables: amounts "
+            "and quantities (sales, revenue, units, counts) are whole numbers "
+            "with comma separators and no decimals, e.g. 12,450. Calculated "
+            "rates and ratios (discount %, CTR, CVR, margin, conversion rate) "
+            "get up to 2 decimal places, e.g. 4.37%. Name chart/table columns "
+            "so this is obvious — include the % sign or words like \"rate\"/"
+            "\"CTR\"/\"discount\" for ratio-type columns.\n\n"
             "Favor efficient SQL over many small queries: use GROUP BY, JOINs, "
             "UNION, or CTEs to answer in one or two queries rather than looping "
             "one query per category, channel, or time period — you have a "
@@ -506,7 +527,15 @@ def ask():
                 yield f"event: error\ndata: {sse_escape('This question needed too many steps — try narrowing it.')}\n\n"
                 return
 
-            usage_payload = {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens}
+            pricing = MODEL_PRICING_USD_PER_MTOK.get(MODEL, DEFAULT_PRICING)
+            cost_usd = (total_input_tokens / 1_000_000 * pricing["input"]) + (
+                total_output_tokens / 1_000_000 * pricing["output"]
+            )
+            usage_payload = {
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "cost_inr": round(cost_usd * USD_TO_INR_RATE, 4),
+            }
             yield f"event: usage\ndata: {json.dumps(usage_payload)}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as exc:
