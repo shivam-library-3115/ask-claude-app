@@ -380,6 +380,7 @@ form.addEventListener("submit", async (e) => {
 
       for (const raw of chunks) {
         if (!raw.trim()) continue;
+        if (raw.startsWith(":")) continue; // SSE comment line (heartbeat) — not a real event, ignore entirely
 
         let eventType = "message";
         let data = "";
