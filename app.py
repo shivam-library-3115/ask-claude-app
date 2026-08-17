@@ -419,7 +419,7 @@ def logout():
 
 @app.route("/")
 def index():
-    return render_template("index.html", auth_enabled=bool(SITE_PASSWORD))
+    return render_template("index.html", auth_enabled=bool(SITE_PASSWORD), default_model=MODEL)
 
 
 @app.route("/ask", methods=["POST"])
