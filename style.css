@@ -167,7 +167,7 @@ main {
 }
 
 .a-status.pending::after {
-  content: 'â–';
+  content: '▍';
   color: var(--cyan);
   text-shadow: var(--glow-cyan);
   animation: blink 1s step-start infinite;
