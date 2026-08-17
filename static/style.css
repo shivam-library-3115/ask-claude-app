@@ -302,6 +302,35 @@ form {
   padding: 1.5rem 1.25rem 1.75rem;
 }
 
+.model-row {
+  max-width: 640px;
+  margin: 0 auto 0.5rem;
+}
+
+.model-select {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  background: var(--card);
+  color: var(--ink-soft);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.model-select:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.model-select option {
+  background: var(--card);
+  color: var(--ink);
+}
+
 .input-wrap {
   max-width: 640px;
   margin: 0 auto;
