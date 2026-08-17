@@ -27,10 +27,10 @@
 <form id="ask-form">
   <div class="model-row">
     <select id="model-select" class="model-select">
-      <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fastest, cheapest</option>
-      <option value="claude-sonnet-5" selected>Sonnet 5 — balanced (default)</option>
-      <option value="claude-opus-4-8">Opus 4.8 — stronger reasoning</option>
-      <option value="claude-fable-5">Fable 5 — best available</option>
+      <option value="claude-haiku-4-5-20251001" {% if default_model == 'claude-haiku-4-5-20251001' %}selected{% endif %}>Haiku 4.5 — fastest, cheapest</option>
+      <option value="claude-sonnet-5" {% if default_model == 'claude-sonnet-5' %}selected{% endif %}>Sonnet 5 — balanced{% if default_model == 'claude-sonnet-5' %} (default){% endif %}</option>
+      <option value="claude-opus-4-8" {% if default_model == 'claude-opus-4-8' %}selected{% endif %}>Opus 4.8 — stronger reasoning{% if default_model == 'claude-opus-4-8' %} (default){% endif %}</option>
+      <option value="claude-fable-5" {% if default_model == 'claude-fable-5' %}selected{% endif %}>Fable 5 — best available{% if default_model == 'claude-fable-5' %} (default){% endif %}</option>
     </select>
   </div>
   <div class="input-wrap">
