@@ -111,6 +111,23 @@ DEFAULT_PRICING = MODEL_PRICING_USD_PER_MTOK["claude-sonnet-5"]
 # Approximate — exchange rates drift. Override with a real-time source, or
 # just update this number occasionally, via the USD_TO_INR_RATE env var.
 USD_TO_INR_RATE = float(os.environ.get("USD_TO_INR_RATE", "95.6"))
+
+
+def load_schema_notes():
+    """Load the human-maintained business/domain notes about the database, if
+    present. Returns "" when the file is absent so the app still works without it."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema_notes.md")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+    except Exception as exc:
+        print(f"WARNING: could not read schema_notes.md ({exc}) — continuing without it.")
+        return ""
+
+
+SCHEMA_NOTES = load_schema_notes()
 MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 4000    # cap per message
@@ -307,7 +324,13 @@ def build_system_and_tools():
             "UNION, or CTEs to answer in one or two queries rather than looping "
             "one query per category, channel, or time period — you have a "
             "limited number of tool-use steps per question.\n\n"
-            "Database schema:\n" + schema
+            + (
+                "Business context about this database — trust these definitions "
+                "over your own assumptions about what a column means:\n"
+                + SCHEMA_NOTES + "\n\n"
+                if SCHEMA_NOTES else ""
+            )
+            + "Live database schema (actual tables and columns):\n" + schema
         )
         return system, [SQL_TOOL, CHART_TOOL, TABLE_TOOL]
     except Exception as exc:
