@@ -130,8 +130,8 @@ def load_schema_notes():
 SCHEMA_NOTES = load_schema_notes()
 MAX_TOKENS = 3000
 MAX_MESSAGES = 40           # cap on conversation length (user + assistant turns)
-MAX_MESSAGE_CHARS = 4000    # cap per message
-MAX_TOTAL_CHARS = 20000     # cap on the whole conversation payload
+MAX_MESSAGE_CHARS = 25000    # cap per message
+MAX_TOTAL_CHARS = 200000     # cap on the whole conversation payload
 MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
