@@ -128,11 +128,11 @@ def load_schema_notes():
 
 
 SCHEMA_NOTES = load_schema_notes()
-MAX_TOKENS = 3000
-MAX_MESSAGES = 400           # cap on conversation length (user + assistant turns)
-MAX_MESSAGE_CHARS = 25000    # cap per message
-MAX_TOTAL_CHARS = 200000     # cap on the whole conversation payload
-MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
+MAX_TOKENS = 30000
+MAX_MESSAGES = 1000          # cap on conversation length (user + assistant turns)
+MAX_MESSAGE_CHARS = 250000   # cap per message
+MAX_TOTAL_CHARS = 200000    # cap on the whole conversation payload
+MAX_TOOL_STEPS = 150         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -303,14 +303,15 @@ def build_system_and_tools():
             "never guess at numbers or rows. Only the tables and columns listed "
             "below exist; if a question needs something outside them, say so "
             "instead of inventing it.\n\n"
-            "When a question calls for a trend, comparison, or breakdown that's "
-            "naturally visual, call render_chart instead of describing numbers in "
-            "prose. When a question calls for a list of records or a multi-column "
-            "result, call render_table instead of writing the rows out as text — "
-            "use highlight_rows to flag specific rows the user cares about (e.g. "
-            "weekends, outliers, a particular category). After rendering a chart "
-            "or table, add only a brief one- or two-sentence takeaway — don't "
-            "repeat the full data as text too.\n\n"
+            "Default the year to 2026 whenever a question names a month without a "
+            "year (e.g. \"Jun\" means June 2026), unless another year is stated.\n\n"
+            "For any result that has data behind it, show BOTH a table and a chart: "
+            "call render_table AND render_chart. Use render_chart for the trend/"
+            "comparison/breakdown and render_table for the underlying rows — use "
+            "highlight_rows to flag rows the user cares about (weekends, outliers, "
+            "a particular category). Keep the written portion to a few precise "
+            "bullet points — no long paragraphs, and don't repeat the full data as "
+            "text when it's already in the table/chart.\n\n"
             "Never mention SQL, queries, or table/column names in your answer — "
             "the person you're talking to should just see the result.\n\n"
             "When writing numbers, whether in prose or in charts/tables: amounts "
