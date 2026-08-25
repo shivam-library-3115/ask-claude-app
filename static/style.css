@@ -9,9 +9,9 @@
   --magenta: #ff2ea8;
   --glow-cyan: 0 0 6px rgba(0, 245, 255, 0.55), 0 0 22px rgba(0, 245, 255, 0.22);
   --glow-magenta: 0 0 6px rgba(255, 46, 168, 0.6), 0 0 22px rgba(255, 46, 168, 0.26);
-  --font-display: 'Orbitron', 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -246,6 +246,7 @@ table {
   width: 100%;
   font-family: var(--font-mono);
   font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
 }
 
 th, td {
@@ -293,7 +294,7 @@ tbody tr:hover {
   text-shadow: 0 0 6px rgba(255, 84, 112, 0.5);
 }
 
-form {
+#ask-form {
   position: fixed;
   bottom: 0;
   left: 0;
@@ -584,6 +585,7 @@ header { margin-top: 2.5rem; }
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .admin-table th, .admin-table td {
