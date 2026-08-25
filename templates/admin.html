@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plush Intelligence — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+<div class="topbar">
+  <a href="{{ url_for('index') }}" class="topbar-btn">← Back to Plush Buddy</a>
+  <div class="topbar-right">
+    <span class="topbar-user">{{ username }} (admin)</span>
+    <a href="{{ url_for('logout') }}" class="topbar-btn">Log out</a>
+  </div>
+</div>
+
+<div class="admin-wrap">
+  <div class="eyebrow">Plush Intelligence</div>
+  <h1 class="admin-title">Admin — Usage</h1>
+
+  <h2 class="admin-section">Add a user</h2>
+  {% if create_msg %}<div class="admin-msg">{{ create_msg }}</div>{% endif %}
+  <form method="POST" action="{{ url_for('admin_create_user') }}" class="admin-create-form">
+    <input type="text" name="new_username" placeholder="Username" required autocomplete="off" />
+    <input type="password" name="new_password" placeholder="Password (min 6 chars)" required autocomplete="new-password" />
+    <label class="admin-check"><input type="checkbox" name="make_admin" /> Admin</label>
+    <button type="submit">Create user</button>
+  </form>
+
+  <h2 class="admin-section">Per-user totals</h2>
+  <div class="admin-table-scroll">
+    <table class="admin-table">
+      <thead>
+        <tr><th>User</th><th>Questions</th><th>Input tokens</th><th>Output tokens</th><th>Cost (₹)</th></tr>
+      </thead>
+      <tbody>
+        {% for r in summary %}
+        <tr>
+          <td>{{ r.username }}</td>
+          <td>{{ "{:,}".format(r.questions) }}</td>
+          <td>{{ "{:,}".format(r.input_tokens) }}</td>
+          <td>{{ "{:,}".format(r.output_tokens) }}</td>
+          <td>₹{{ "%.2f"|format(r.cost_inr) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No usage yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="admin-section">Every question (most recent first)</h2>
+  <div class="admin-table-scroll">
+    <table class="admin-table">
+      <thead>
+        <tr><th>When (UTC)</th><th>User</th><th>Model</th><th>Question</th><th>In</th><th>Out</th><th>₹</th></tr>
+      </thead>
+      <tbody>
+        {% for r in log %}
+        <tr>
+          <td>{{ r.created_at }}</td>
+          <td>{{ r.username }}</td>
+          <td>{{ r.model }}</td>
+          <td class="admin-q">{{ r.question }}</td>
+          <td>{{ "{:,}".format(r.input_tokens) }}</td>
+          <td>{{ "{:,}".format(r.output_tokens) }}</td>
+          <td>₹{{ "%.2f"|format(r.cost_inr) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7">No questions logged yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="admin-section">Users</h2>
+  <div class="admin-table-scroll">
+    <table class="admin-table">
+      <thead><tr><th>Username</th><th>Role</th><th>Created (UTC)</th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr><td>{{ u.username }}</td><td>{{ "Admin" if u.is_admin else "User" }}</td><td>{{ u.created_at }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>
