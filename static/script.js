@@ -23,6 +23,80 @@ function formatTokenCount(n) {
   return n.toLocaleString();
 }
 
+// ---- History sidebar ----
+const historyToggle = document.getElementById("history-toggle");
+const historyPanel = document.getElementById("history-panel");
+const historyList = document.getElementById("history-list");
+
+if (historyToggle) {
+  historyToggle.addEventListener("click", async () => {
+    const showing = !historyPanel.hidden;
+    if (showing) {
+      historyPanel.hidden = true;
+      return;
+    }
+    historyPanel.hidden = false;
+    historyList.innerHTML = '<div class="history-empty">Loading…</div>';
+    try {
+      const res = await fetch("/history/dates");
+      const data = await res.json();
+      if (!data.dates || data.dates.length === 0) {
+        historyList.innerHTML = '<div class="history-empty">No saved history yet.</div>';
+        return;
+      }
+      historyList.innerHTML = "";
+      data.dates.forEach((d) => {
+        const el = document.createElement("div");
+        el.className = "history-date";
+        el.innerHTML = `${d.date} <span class="count">(${d.count})</span>`;
+        el.addEventListener("click", () => loadHistoryDay(d.date));
+        historyList.appendChild(el);
+      });
+    } catch (e) {
+      historyList.innerHTML = '<div class="history-empty">Could not load history.</div>';
+    }
+  });
+}
+
+async function loadHistoryDay(date) {
+  try {
+    const res = await fetch(`/history/day?date=${encodeURIComponent(date)}`);
+    const data = await res.json();
+    if (emptyState) emptyState.remove();
+    log.innerHTML = "";
+    const heading = document.createElement("div");
+    heading.className = "history-heading";
+    heading.textContent = `History — ${date}`;
+    log.appendChild(heading);
+    (data.chats || []).forEach((c, i) => {
+      const entry = document.createElement("div");
+      entry.className = "entry";
+      entry.setAttribute("data-num", String(i + 1).padStart(3, "0"));
+      const q = document.createElement("div");
+      q.className = "row";
+      q.innerHTML = '<span class="label">Question</span>';
+      const qt = document.createElement("div");
+      qt.className = "q-text";
+      qt.textContent = c.question;
+      q.appendChild(qt);
+      const a = document.createElement("div");
+      a.className = "row";
+      a.innerHTML = '<span class="label">Plush Buddy</span>';
+      const at = document.createElement("div");
+      at.className = "a-text";
+      at.textContent = c.answer || "(no saved text — chart/table only)";
+      a.appendChild(at);
+      entry.appendChild(q);
+      entry.appendChild(a);
+      log.appendChild(entry);
+    });
+    historyPanel.hidden = true;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) {
+    // ignore
+  }
+}
+
 function formatINR(amount) {
   // Per-question cost is usually well under ₹1 — show enough precision
   // that it doesn't just read as "free". Larger amounts get normal 2dp.
