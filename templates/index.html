@@ -12,7 +12,19 @@
 </head>
 <body>
 
-{% if auth_enabled %}<a href="{{ url_for('logout') }}" class="logout-link">Log out</a>{% endif %}
+<div class="topbar">
+  <button type="button" id="history-toggle" class="topbar-btn" title="Your chat history">☰ History</button>
+  <div class="topbar-right">
+    {% if is_admin %}<a href="{{ url_for('admin') }}" class="topbar-btn">Admin</a>{% endif %}
+    <span class="topbar-user">{{ username }}</span>
+    <a href="{{ url_for('logout') }}" class="topbar-btn">Log out</a>
+  </div>
+</div>
+
+<aside id="history-panel" class="history-panel" hidden>
+  <div class="history-head">Your history</div>
+  <div id="history-list" class="history-list"></div>
+</aside>
 
 <header>
   <div class="eyebrow">Plush Intelligence</div>
