@@ -10,6 +10,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 import db
+import appdata
 
 load_dotenv()
 
@@ -90,9 +91,21 @@ if not SECRET_KEY:
     SECRET_KEY = os.urandom(32).hex()
 app.secret_key = SECRET_KEY
 
-SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
-if not SITE_PASSWORD:
-    print("WARNING: SITE_PASSWORD is not set — the site is NOT password protected.")
+# Initialize app-data tables (users, history, usage) and bootstrap the first
+# admin from env vars if no users exist yet. Non-fatal if app-data isn't
+# configured — the app still runs, it just can't do accounts/history until set.
+APPDATA_READY = False
+try:
+    appdata.init_tables()
+    APPDATA_READY = True
+    bootstrap_user = os.environ.get("ADMIN_USERNAME")
+    bootstrap_pass = os.environ.get("ADMIN_PASSWORD")
+    if bootstrap_user and bootstrap_pass and not appdata.user_exists(bootstrap_user):
+        appdata.create_user(bootstrap_user, bootstrap_pass, is_admin=True)
+        print(f"Bootstrapped admin user '{bootstrap_user}'.")
+except Exception as exc:
+    print(f"WARNING: app-data storage not ready ({exc}). "
+          "Set APPDB_USER/APPDB_PASSWORD (and ADMIN_USERNAME/ADMIN_PASSWORD to seed an admin).")
 
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
@@ -128,11 +141,11 @@ def load_schema_notes():
 
 
 SCHEMA_NOTES = load_schema_notes()
-MAX_TOKENS = 30000
-MAX_MESSAGES = 1000          # cap on conversation length (user + assistant turns)
-MAX_MESSAGE_CHARS = 250000   # cap per message
+MAX_TOKENS = 3000
+MAX_MESSAGES = 100          # cap on conversation length (user + assistant turns)
+MAX_MESSAGE_CHARS = 25000   # cap per message
 MAX_TOTAL_CHARS = 200000    # cap on the whole conversation payload
-MAX_TOOL_STEPS = 150         # cap on how many query/render round-trips one question can take
+MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -409,15 +422,22 @@ def prepare_table(raw_input: dict):
 
 @app.before_request
 def require_login():
-    if not SITE_PASSWORD:
-        return  # no password configured — app stays open
+    # Endpoints reachable without being logged in.
     if request.endpoint in ("login", "static"):
         return
-    if session.get("authenticated"):
+    if session.get("username"):
         return
     if request.endpoint == "ask":
         return {"error": "Session expired — please refresh the page and log in again."}, 401
     return redirect(url_for("login"))
+
+
+def current_user():
+    return session.get("username")
+
+
+def is_admin():
+    return bool(session.get("is_admin"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -427,11 +447,21 @@ def login():
         ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
         if is_rate_limited(f"login:{ip}", LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS):
             error = "Too many attempts. Please wait a few minutes and try again."
-        elif SITE_PASSWORD and request.form.get("password") == SITE_PASSWORD:
-            session["authenticated"] = True
-            return redirect(url_for("index"))
         else:
-            error = "Incorrect password."
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            user = None
+            try:
+                user = appdata.verify_user(username, password)
+            except Exception as exc:
+                error = "Login is temporarily unavailable. Please try again shortly."
+                print(f"Login error: {exc}")
+            if user:
+                session["username"] = user["username"]
+                session["is_admin"] = user["is_admin"]
+                return redirect(url_for("index"))
+            elif not error:
+                error = "Incorrect username or password."
     return render_template("login.html", error=error)
 
 
@@ -443,7 +473,70 @@ def logout():
 
 @app.route("/")
 def index():
-    return render_template("index.html", auth_enabled=bool(SITE_PASSWORD), default_model=MODEL)
+    return render_template("index.html", default_model=MODEL,
+                           username=current_user(), is_admin=is_admin())
+
+
+@app.route("/history/dates")
+def history_dates():
+    try:
+        return {"dates": appdata.list_chat_dates(current_user())}
+    except Exception as exc:
+        return {"error": str(exc)}, 500
+
+
+@app.route("/history/day")
+def history_day():
+    day = request.args.get("date", "")
+    try:
+        return {"chats": appdata.get_chat_for_date(current_user(), day)}
+    except Exception as exc:
+        return {"error": str(exc)}, 500
+
+
+@app.route("/admin/create-user", methods=["POST"])
+def admin_create_user():
+    if not is_admin():
+        return redirect(url_for("index"))
+    new_user = (request.form.get("new_username") or "").strip()
+    new_pass = request.form.get("new_password") or ""
+    make_admin = request.form.get("make_admin") == "on"
+    msg = None
+    try:
+        if not new_user or not new_pass:
+            msg = "Username and password are both required."
+        elif appdata.user_exists(new_user):
+            msg = f"User '{new_user}' already exists."
+        elif len(new_pass) < 6:
+            msg = "Password must be at least 6 characters."
+        else:
+            appdata.create_user(new_user, new_pass, is_admin=make_admin)
+            msg = f"Created user '{new_user}'."
+    except Exception as exc:
+        msg = f"Could not create user: {exc}"
+    # Re-render the admin page with a status message
+    try:
+        summary = appdata.usage_summary()
+        log = appdata.usage_log()
+        users = appdata.list_users()
+    except Exception as exc:
+        return f"Admin data unavailable: {exc}", 500
+    return render_template("admin.html", summary=summary, log=log, users=users,
+                           username=current_user(), create_msg=msg)
+
+
+@app.route("/admin")
+def admin():
+    if not is_admin():
+        return redirect(url_for("index"))
+    try:
+        summary = appdata.usage_summary()
+        log = appdata.usage_log()
+        users = appdata.list_users()
+    except Exception as exc:
+        return f"Admin data unavailable: {exc}", 500
+    return render_template("admin.html", summary=summary, log=log, users=users,
+                           username=current_user())
 
 
 @app.route("/ask", methods=["POST"])
@@ -468,6 +561,9 @@ def ask():
             convo = list(messages)  # local copy — tool turns never go back to the client
             total_input_tokens = 0
             total_output_tokens = 0
+            answer_text_parts = []
+            user_question = messages[-1]["content"] if messages else ""
+            acting_user = current_user()
 
             for step in range(MAX_TOOL_STEPS):
                 yield f"event: status\ndata: {sse_escape('Reviewing results…' if step else 'Thinking…')}\n\n"
@@ -483,6 +579,7 @@ def ask():
                         elif kind == "error":
                             raise value
                         else:
+                            answer_text_parts.append(value)
                             yield f"data: {sse_escape(value)}\n\n"
                     final = stream.get_final_message()
 
@@ -560,13 +657,25 @@ def ask():
             cost_usd = (total_input_tokens / 1_000_000 * pricing["input"]) + (
                 total_output_tokens / 1_000_000 * pricing["output"]
             )
+            cost_inr = round(cost_usd * USD_TO_INR_RATE, 4)
             usage_payload = {
                 "model": selected_model,
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
-                "cost_inr": round(cost_usd * USD_TO_INR_RATE, 4),
+                "cost_inr": cost_inr,
             }
             yield f"event: usage\ndata: {json.dumps(usage_payload)}\n\n"
+
+            # Persist history + usage. Best-effort: a storage hiccup must never
+            # break the answer the user just received.
+            answer_text = "".join(answer_text_parts).strip()
+            try:
+                appdata.save_chat(acting_user, user_question, answer_text)
+                appdata.log_usage(acting_user, selected_model, total_input_tokens,
+                                  total_output_tokens, cost_inr, user_question)
+            except Exception as exc:
+                print(f"WARNING: failed to persist history/usage for {acting_user}: {exc}")
+
             yield "event: done\ndata: {}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {sse_escape(str(exc))}\n\n"
