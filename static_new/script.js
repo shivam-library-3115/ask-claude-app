@@ -3,6 +3,106 @@ const emptyState = document.getElementById("empty-state");
 const form = document.getElementById("ask-form");
 const questionEl = document.getElementById("question");
 const submitBtn = document.getElementById("submit-btn");
+const stopBtn = document.getElementById("stop-btn");
+const modelSelect = document.getElementById("model-select");
+
+const MODEL_DISPLAY_NAMES = {
+  "claude-haiku-4-5-20251001": "Haiku 4.5",
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-fable-5": "Fable 5",
+};
+
+let activeController = null;
+
+stopBtn.addEventListener("click", () => {
+  if (activeController) activeController.abort();
+});
+
+function formatTokenCount(n) {
+  return n.toLocaleString();
+}
+
+// ---- History sidebar ----
+const historyToggle = document.getElementById("history-toggle");
+const historyPanel = document.getElementById("history-panel");
+const historyList = document.getElementById("history-list");
+
+if (historyToggle) {
+  historyToggle.addEventListener("click", async () => {
+    const showing = !historyPanel.hidden;
+    if (showing) {
+      historyPanel.hidden = true;
+      return;
+    }
+    historyPanel.hidden = false;
+    historyList.innerHTML = '<div class="history-empty">Loading…</div>';
+    try {
+      const res = await fetch("/history/dates");
+      const data = await res.json();
+      if (!data.dates || data.dates.length === 0) {
+        historyList.innerHTML = '<div class="history-empty">No saved history yet.</div>';
+        return;
+      }
+      historyList.innerHTML = "";
+      data.dates.forEach((d) => {
+        const el = document.createElement("div");
+        el.className = "history-date";
+        el.innerHTML = `${d.date} <span class="count">(${d.count})</span>`;
+        el.addEventListener("click", () => loadHistoryDay(d.date));
+        historyList.appendChild(el);
+      });
+    } catch (e) {
+      historyList.innerHTML = '<div class="history-empty">Could not load history.</div>';
+    }
+  });
+}
+
+async function loadHistoryDay(date) {
+  try {
+    const res = await fetch(`/history/day?date=${encodeURIComponent(date)}`);
+    const data = await res.json();
+    if (emptyState) emptyState.remove();
+    log.innerHTML = "";
+    const heading = document.createElement("div");
+    heading.className = "history-heading";
+    heading.textContent = `History — ${date}`;
+    log.appendChild(heading);
+    (data.chats || []).forEach((c, i) => {
+      const entry = document.createElement("div");
+      entry.className = "entry";
+      entry.setAttribute("data-num", String(i + 1).padStart(3, "0"));
+      const q = document.createElement("div");
+      q.className = "row";
+      q.innerHTML = '<span class="label">Question</span>';
+      const qt = document.createElement("div");
+      qt.className = "q-text";
+      qt.textContent = c.question;
+      q.appendChild(qt);
+      const a = document.createElement("div");
+      a.className = "row";
+      a.innerHTML = '<span class="label">Plush Buddy</span>';
+      const at = document.createElement("div");
+      at.className = "a-text";
+      at.textContent = c.answer || "(no saved text — chart/table only)";
+      a.appendChild(at);
+      entry.appendChild(q);
+      entry.appendChild(a);
+      log.appendChild(entry);
+    });
+    historyPanel.hidden = true;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) {
+    // ignore
+  }
+}
+
+function formatINR(amount) {
+  // Per-question cost is usually well under ₹1 — show enough precision
+  // that it doesn't just read as "free". Larger amounts get normal 2dp.
+  if (amount < 1) return `₹${amount.toFixed(4)}`;
+  return `₹${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 let history = []; // {role: 'user'|'assistant', content: string}
 let entryCount = 0;
@@ -71,6 +171,32 @@ questionEl.addEventListener("keydown", (e) => {
 
 function withAlpha(hex, alpha) {
   return hex + alpha;
+}
+
+// Column/series names matching this look like a rate, ratio, or percentage
+// (CTR, CVR, discount %, margin, conversion rate, etc.) — those get up to 2
+// decimal places. Everything else numeric (sales, quantities, counts) is
+// treated as a whole-number amount — rounded, comma-grouped, no decimals.
+const RATE_LABEL_PATTERN = /ctr|cvr|rate|ratio|margin|discount|conversion|%|percent/i;
+
+function isNumericValue(v) {
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "string" && v.trim() !== "") return Number.isFinite(Number(v));
+  return false;
+}
+
+function formatMetricValue(value, label) {
+  const num = Number(value);
+  if (RATE_LABEL_PATTERN.test(label || "")) {
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return Math.round(num).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function formatCellDisplay(value, columnName) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (isNumericValue(value)) return formatMetricValue(value, columnName);
+  return String(value);
 }
 
 function csvEscape(value) {
@@ -182,6 +308,8 @@ function renderChartBlock(container, spec) {
     };
   }
 
+  const valueLabel = spec.y_label || (spec.series && spec.series[0] && spec.series[0].name) || "";
+
   new Chart(canvas.getContext("2d"), {
     type: type,
     data: data,
@@ -191,6 +319,15 @@ function renderChartBlock(container, spec) {
       plugins: {
         legend: {
           labels: { color: "#edf0ff", font: { family: "'JetBrains Mono', monospace", size: 11 } },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const raw = type === "scatter" ? ctx.parsed.y : ctx.parsed.y ?? ctx.parsed;
+              const seriesLabel = ctx.dataset.label || valueLabel;
+              return `${seriesLabel}: ${formatMetricValue(raw, seriesLabel)}`;
+            },
+          },
         },
         title: spec.title
           ? {
@@ -207,7 +344,13 @@ function renderChartBlock(container, spec) {
           ? {}
           : {
               x: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
-              y: { ticks: { color: "#8d8fc0" }, grid: { color: "rgba(0,245,255,0.08)" } },
+              y: {
+                ticks: {
+                  color: "#8d8fc0",
+                  callback: (val) => formatMetricValue(val, valueLabel),
+                },
+                grid: { color: "rgba(0,245,255,0.08)" },
+              },
             },
     },
   });
@@ -244,12 +387,13 @@ function renderTableBlock(container, spec) {
 
   const tbody = document.createElement("tbody");
   const highlighted = new Set(spec.highlight_rows || []);
+  const columns = spec.columns || [];
   (spec.rows || []).forEach((row, i) => {
     const tr = document.createElement("tr");
     if (highlighted.has(i)) tr.className = "row-highlight";
-    row.forEach((cell) => {
+    row.forEach((cell, colIndex) => {
       const td = document.createElement("td");
-      td.textContent = cell === null || cell === undefined || cell === "" ? "—" : String(cell);
+      td.textContent = formatCellDisplay(cell, columns[colIndex]);
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -350,11 +494,16 @@ form.addEventListener("submit", async (e) => {
     fullAnswerText += chunk;
   }
 
+  const controller = new AbortController();
+  activeController = controller;
+  stopBtn.hidden = false;
+
   try {
     const response = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({ messages: history, model: modelSelect.value }),
+      signal: controller.signal,
     });
 
     if (!response.ok || !response.body) {
@@ -380,6 +529,7 @@ form.addEventListener("submit", async (e) => {
 
       for (const raw of chunks) {
         if (!raw.trim()) continue;
+        if (raw.startsWith(":")) continue; // SSE comment line (heartbeat) — not a real event, ignore entirely
 
         let eventType = "message";
         let data = "";
@@ -410,6 +560,14 @@ form.addEventListener("submit", async (e) => {
           // Transient progress line, shown below whatever's rendered so far.
           statusEl.textContent = decoded;
           bumpProgress();
+        } else if (eventType === "usage") {
+          const usage = JSON.parse(data);
+          const usageEl = document.createElement("div");
+          usageEl.className = "token-usage";
+          usageEl.title = "Estimated from current Claude API pricing and an approximate USD→INR rate — actual billed cost may vary slightly.";
+          const modelName = MODEL_DISPLAY_NAMES[usage.model] || usage.model;
+          usageEl.textContent = `${modelName} · ${formatTokenCount(usage.input_tokens)} in · ${formatTokenCount(usage.output_tokens)} out tokens · ≈${formatINR(usage.cost_inr)}`;
+          answerBody.appendChild(usageEl);
         } else if (eventType !== "done") {
           appendText(decoded);
         }
@@ -424,13 +582,22 @@ form.addEventListener("submit", async (e) => {
     statusEl.classList.remove("pending");
     statusEl.textContent = "";
     finishProgress(false);
-    const errEl = document.createElement("div");
-    errEl.className = "a-text error-text";
-    errEl.textContent = `Could not reach Plush Buddy — ${err.message}`;
-    answerBody.appendChild(errEl);
-    history.pop(); // don't keep a failed turn in context
+    if (err.name === "AbortError") {
+      const stoppedEl = document.createElement("div");
+      stoppedEl.className = "a-text stopped-text";
+      stoppedEl.textContent = fullAnswerText ? "Stopped." : "Stopped before an answer was generated.";
+      answerBody.appendChild(stoppedEl);
+    } else {
+      const errEl = document.createElement("div");
+      errEl.className = "a-text error-text";
+      errEl.textContent = `Could not reach Plush Buddy — ${err.message}`;
+      answerBody.appendChild(errEl);
+    }
+    history.pop(); // don't keep a stopped or failed turn in context
   } finally {
     submitBtn.disabled = false;
+    stopBtn.hidden = true;
+    activeController = null;
     questionEl.focus();
   }
 });
