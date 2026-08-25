@@ -318,7 +318,7 @@ function renderChartBlock(container, spec) {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          labels: { color: "#edf0ff", font: { family: "'JetBrains Mono', monospace", size: 11 } },
+          labels: { color: "#edf0ff", font: { family: "'Inter', sans-serif", size: 11 } },
         },
         tooltip: {
           callbacks: {
@@ -334,7 +334,7 @@ function renderChartBlock(container, spec) {
               display: true,
               text: spec.title,
               color: "#00f5ff",
-              font: { family: "'Orbitron', sans-serif", size: 13, weight: "700" },
+              font: { family: "'Inter', sans-serif", size: 13, weight: "700" },
               padding: { bottom: 12 },
             }
           : { display: false },
@@ -535,7 +535,15 @@ form.addEventListener("submit", async (e) => {
         let data = "";
         for (const line of raw.split("\n")) {
           if (line.startsWith("event:")) eventType = line.slice(6).trim();
-          if (line.startsWith("data:")) data += line.slice(5).trim();
+          if (line.startsWith("data:")) {
+            // Per the SSE spec, exactly ONE optional space after "data:" is part
+            // of the framing and stripped; any further spaces are real content.
+            // Trimming everything (the old bug) deleted spaces Claude streamed
+            // between words, gluing text together.
+            let chunk = line.slice(5);
+            if (chunk.startsWith(" ")) chunk = chunk.slice(1);
+            data += chunk;
+          }
         }
 
         if (eventType === "chart" || eventType === "table") {
