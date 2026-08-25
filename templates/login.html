@@ -14,7 +14,8 @@
     <div class="eyebrow">Plush Intelligence</div>
     <h1>Sign In</h1>
     <form method="POST" action="{{ url_for('login') }}">
-      <input type="password" name="password" placeholder="Password" autofocus required />
+      <input type="text" name="username" placeholder="Username" autofocus required autocomplete="username" />
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password" />
       {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
       <button type="submit">Enter</button>
     </form>
