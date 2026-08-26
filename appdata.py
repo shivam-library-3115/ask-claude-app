@@ -88,6 +88,14 @@ def init_tables():
                 INDEX idx_created (created_at)
             ) CHARACTER SET utf8mb4
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS plush_table_access (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(64) NOT NULL,
+                table_name VARCHAR(128) NOT NULL,
+                UNIQUE KEY uq_user_table (username, table_name)
+            ) CHARACTER SET utf8mb4
+        """))
 
 
 # ---------------- Users ----------------
@@ -210,3 +218,51 @@ def usage_log(limit=500):
     return [{"username": r.username, "model": r.model, "input_tokens": r.input_tokens,
              "output_tokens": r.output_tokens, "cost_inr": float(r.cost_inr or 0),
              "question": r.question, "created_at": str(r.created_at)} for r in rows]
+
+
+# ---------------- Table access permissions ----------------
+
+def set_table_access(username, table_names):
+    """Replace a user's allowed-table list with exactly table_names (a list of
+    strings). An empty list means the user has access to NO tables until assigned."""
+    engine = get_engine()
+    # De-dupe and clean in Python so we don't depend on DB-specific INSERT IGNORE.
+    clean = []
+    seen = set()
+    for t in table_names:
+        t = (t or "").strip()
+        if t and t not in seen:
+            seen.add(t)
+            clean.append(t)
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM plush_table_access WHERE username = :u"), {"u": username})
+        for t in clean:
+            conn.execute(
+                text("INSERT INTO plush_table_access (username, table_name) VALUES (:u, :t)"),
+                {"u": username, "t": t},
+            )
+
+
+def get_table_access(username):
+    """Return the set of table names this user is allowed to query."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT table_name FROM plush_table_access WHERE username = :u"),
+            {"u": username},
+        ).fetchall()
+    return {r.table_name for r in rows}
+
+
+def get_all_table_access():
+    """Return {username: [table, ...]} for every user that has any assignment.
+    Used by the admin view."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT username, table_name FROM plush_table_access ORDER BY username, table_name")
+        ).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r.username, []).append(r.table_name)
+    return out
