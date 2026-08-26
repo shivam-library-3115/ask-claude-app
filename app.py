@@ -305,11 +305,13 @@ def validate_messages(raw):
     return cleaned, None
 
 
-def build_system_and_tools():
+def build_system_and_tools(allowed_tables=None):
     """Schema-aware system prompt + tools — degrades gracefully to a plain
-    assistant (no tools) if the database can't be reached right now."""
+    assistant (no tools) if the database can't be reached right now.
+    If allowed_tables is a set, the schema shown to the model is filtered to
+    only those tables (so a restricted user's assistant never sees the rest)."""
     try:
-        schema = db.get_schema_context()
+        schema = db.get_schema_context(allowed_tables=allowed_tables)
         system = (
             "You are Plush Buddy, the data assistant for Plush Intelligence. "
             "Use the run_sql_query tool to look up real data before answering — "
@@ -494,6 +496,42 @@ def history_day():
         return {"error": str(exc)}, 500
 
 
+@app.route("/admin/set-access", methods=["POST"])
+def admin_set_access():
+    if not is_admin():
+        return redirect(url_for("index"))
+    target = (request.form.get("target_user") or "").strip()
+    # Checkboxes: only checked table names are submitted, as multiple "tables" fields
+    selected = request.form.getlist("tables")
+    msg = None
+    try:
+        if not target:
+            msg = "Pick a user."
+        else:
+            appdata.set_table_access(target, selected)
+            if selected:
+                msg = f"Updated table access for '{target}' ({len(selected)} table(s))."
+            else:
+                msg = f"Cleared all table access for '{target}' — they now have access to no tables."
+    except Exception as exc:
+        msg = f"Could not update access: {exc}"
+    return _render_admin(access_msg=msg)
+
+
+def _render_admin(create_msg=None, access_msg=None):
+    summary = appdata.usage_summary()
+    log = appdata.usage_log()
+    users = appdata.list_users()
+    try:
+        all_tables = db.get_all_table_names()
+    except Exception:
+        all_tables = []
+    access_map = appdata.get_all_table_access()
+    return render_template("admin.html", summary=summary, log=log, users=users,
+                           username=current_user(), all_tables=all_tables,
+                           access_map=access_map, create_msg=create_msg, access_msg=access_msg)
+
+
 @app.route("/admin/create-user", methods=["POST"])
 def admin_create_user():
     if not is_admin():
@@ -514,15 +552,10 @@ def admin_create_user():
             msg = f"Created user '{new_user}'."
     except Exception as exc:
         msg = f"Could not create user: {exc}"
-    # Re-render the admin page with a status message
     try:
-        summary = appdata.usage_summary()
-        log = appdata.usage_log()
-        users = appdata.list_users()
+        return _render_admin(create_msg=msg)
     except Exception as exc:
         return f"Admin data unavailable: {exc}", 500
-    return render_template("admin.html", summary=summary, log=log, users=users,
-                           username=current_user(), create_msg=msg)
 
 
 @app.route("/admin")
@@ -530,13 +563,9 @@ def admin():
     if not is_admin():
         return redirect(url_for("index"))
     try:
-        summary = appdata.usage_summary()
-        log = appdata.usage_log()
-        users = appdata.list_users()
+        return _render_admin()
     except Exception as exc:
         return f"Admin data unavailable: {exc}", 500
-    return render_template("admin.html", summary=summary, log=log, users=users,
-                           username=current_user())
 
 
 @app.route("/ask", methods=["POST"])
@@ -554,16 +583,29 @@ def ask():
 
     requested_model = data.get("model")
     selected_model = requested_model if requested_model in MODEL_PRICING_USD_PER_MTOK else MODEL
+    acting_user = current_user()
+    acting_is_admin = is_admin()
+
+    # Determine which tables this user may touch. Admins are unrestricted (None).
+    # Non-admins are limited to their assigned set; an empty set means no access.
+    allowed_tables = None
+    all_tables_cache = None
+    if not acting_is_admin:
+        try:
+            allowed_tables = appdata.get_table_access(acting_user)
+            all_tables_cache = db.get_all_table_names()
+        except Exception as exc:
+            print(f"Access-control lookup failed for {acting_user}: {exc}")
+            allowed_tables = set()  # fail closed: no access if we can't confirm
 
     def generate():
         try:
-            system, tools = build_system_and_tools()
+            system, tools = build_system_and_tools(allowed_tables=allowed_tables)
             convo = list(messages)  # local copy — tool turns never go back to the client
             total_input_tokens = 0
             total_output_tokens = 0
             answer_text_parts = []
             user_question = messages[-1]["content"] if messages else ""
-            acting_user = current_user()
 
             for step in range(MAX_TOOL_STEPS):
                 yield f"event: status\ndata: {sse_escape('Reviewing results…' if step else 'Thinking…')}\n\n"
@@ -602,7 +644,7 @@ def ask():
                         # person using the page only ever sees this status.
                         yield f"event: status\ndata: {sse_escape('Fetching data…')}\n\n"
                         result = None
-                        for kind, value in call_with_heartbeat(db.run_sql_query, args=(query,), interval=HEARTBEAT_INTERVAL_SECONDS):
+                        for kind, value in call_with_heartbeat(db.run_sql_query, args=(query,), kwargs={"allowed_tables": allowed_tables, "all_tables": all_tables_cache}, interval=HEARTBEAT_INTERVAL_SECONDS):
                             if kind == "heartbeat":
                                 yield ": keepalive\n\n"
                             else:
