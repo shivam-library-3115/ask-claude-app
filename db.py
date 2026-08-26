@@ -55,19 +55,35 @@ def get_engine():
     return _engine
 
 
-def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25) -> str:
+def get_all_table_names():
+    """Return the full list of real table names in the database (uncached fetch)."""
+    engine = get_engine()
+    insp = inspect(engine)
+    return insp.get_table_names()
+
+
+def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25,
+                       allowed_tables=None) -> str:
     """Return a compact text description of the database's tables and columns,
     used to tell Claude what it's allowed to query. Cached for
     SCHEMA_CACHE_TTL_SECONDS so new tables/columns show up on their own,
-    without needing a server restart."""
+    without needing a server restart.
+
+    If allowed_tables is a set, only those tables are described — so a
+    restricted user's assistant never even sees tables they can't query.
+    (Caching only applies to the unrestricted/full view.)"""
     global _schema_cache, _schema_cache_time
+    restricted = allowed_tables is not None
     now = time.time()
-    if _schema_cache is not None and (now - _schema_cache_time) < SCHEMA_CACHE_TTL_SECONDS:
+    if not restricted and _schema_cache is not None and (now - _schema_cache_time) < SCHEMA_CACHE_TTL_SECONDS:
         return _schema_cache
 
     engine = get_engine()
     insp = inspect(engine)
     tables = insp.get_table_names()
+    if restricted:
+        allowed_lower = {t.lower() for t in allowed_tables}
+        tables = [t for t in tables if t.lower() in allowed_lower]
 
     lines = []
     for table_name in tables[:max_tables]:
@@ -75,17 +91,34 @@ def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25) -> st
         col_desc = ", ".join(f"{c['name']} ({c['type']})" for c in cols[:max_cols_per_table])
         lines.append(f"- {table_name}: {col_desc}")
 
-    schema_text = "\n".join(lines) if lines else "(no tables visible to this database user)"
+    schema_text = "\n".join(lines) if lines else "(no tables available to you)"
     if len(tables) > max_tables:
         schema_text += f"\n… and {len(tables) - max_tables} more tables not shown."
 
-    _schema_cache = schema_text
-    _schema_cache_time = now
-    return _schema_cache
+    if not restricted:
+        _schema_cache = schema_text
+        _schema_cache_time = now
+    return schema_text
 
 
-def validate_select(query: str):
-    """Returns (safe_query, error). Only ever allows a single SELECT/WITH statement."""
+def _tables_referenced(query, known_tables):
+    """Best-effort: return the subset of known_tables whose name appears as a
+    word in the query (case-insensitive). Used to enforce per-user access."""
+    q_lower = query.lower()
+    hits = set()
+    for t in known_tables:
+        # word-boundary match so 'orders' doesn't match 'orders_archive' partially
+        if re.search(r'(?<![\w.])' + re.escape(t.lower()) + r'(?![\w])', q_lower):
+            hits.add(t)
+    return hits
+
+
+def validate_select(query: str, allowed_tables=None, all_tables=None):
+    """Returns (safe_query, error). Only ever allows a single SELECT/WITH statement.
+
+    If allowed_tables is provided (a set), the query is additionally rejected if
+    it references any real table NOT in that set — enforced server-side, so it's
+    real access control, not a prompt suggestion."""
     q = (query or "").strip().rstrip(";").strip()
     if not q:
         return None, "Empty query."
@@ -95,14 +128,26 @@ def validate_select(query: str):
         return None, "Only SELECT statements are allowed."
     if _FORBIDDEN.search(q):
         return None, "Query contains a disallowed keyword."
+
+    if allowed_tables is not None:
+        known = all_tables if all_tables is not None else get_all_table_names()
+        referenced = _tables_referenced(q, known)
+        allowed_lower = {t.lower() for t in allowed_tables}
+        blocked = {t for t in referenced if t.lower() not in allowed_lower}
+        if blocked:
+            names = ", ".join(sorted(blocked))
+            return None, (f"You don't have access to the following table(s): {names}. "
+                          "Ask your admin to grant access if you need them.")
+
     if not _LIMIT_RE.search(q):
         q = f"{q} LIMIT {ROW_CAP}"
     return q, None
 
 
-def run_sql_query(query: str) -> dict:
-    """Validate and execute a read-only query. Always returns a JSON-serializable dict."""
-    safe_query, err = validate_select(query)
+def run_sql_query(query: str, allowed_tables=None, all_tables=None) -> dict:
+    """Validate and execute a read-only query. Always returns a JSON-serializable dict.
+    allowed_tables (a set) restricts which tables the query may touch."""
+    safe_query, err = validate_select(query, allowed_tables=allowed_tables, all_tables=all_tables)
     if err:
         return {"error": err}
 
