@@ -32,6 +32,47 @@
     <button type="submit">Create user</button>
   </form>
 
+  <h2 class="admin-section">Table access</h2>
+  {% if access_msg %}<div class="admin-msg">{{ access_msg }}</div>{% endif %}
+  <p class="admin-note">Admins can see every table. For non-admin users, tick the tables they're allowed to query — anything unticked is blocked. No tables ticked = no data access.</p>
+  <form method="POST" action="{{ url_for('admin_set_access') }}" class="admin-access-form">
+    <div class="access-row">
+      <label>User:
+        <select name="target_user" required>
+          <option value="" disabled selected>Choose a user…</option>
+          {% for u in users %}{% if not u.is_admin %}
+          <option value="{{ u.username }}">{{ u.username }}</option>
+          {% endif %}{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="access-tables">
+      {% for t in all_tables %}
+      <label class="access-table"><input type="checkbox" name="tables" value="{{ t }}" /> {{ t }}</label>
+      {% else %}
+      <span class="admin-note">No tables found in the database.</span>
+      {% endfor %}
+    </div>
+    <button type="submit">Save access</button>
+  </form>
+
+  <div class="admin-table-scroll">
+    <table class="admin-table">
+      <thead><tr><th>User</th><th>Tables they can access</th></tr></thead>
+      <tbody>
+        {% for u in users %}{% if not u.is_admin %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td class="admin-q">
+            {% set assigned = access_map.get(u.username, []) %}
+            {% if assigned %}{{ assigned|join(", ") }}{% else %}<span class="access-none">— none assigned —</span>{% endif %}
+          </td>
+        </tr>
+        {% endif %}{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
   <h2 class="admin-section">Per-user totals</h2>
   <div class="admin-table-scroll">
     <table class="admin-table">
