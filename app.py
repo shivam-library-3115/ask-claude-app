@@ -141,11 +141,11 @@ def load_schema_notes():
 
 
 SCHEMA_NOTES = load_schema_notes()
-MAX_TOKENS = 3000
+MAX_TOKENS = 4000
 MAX_MESSAGES = 100          # cap on conversation length (user + assistant turns)
 MAX_MESSAGE_CHARS = 25000   # cap per message
 MAX_TOTAL_CHARS = 200000    # cap on the whole conversation payload
-MAX_TOOL_STEPS = 15         # cap on how many query/render round-trips one question can take
+MAX_TOOL_STEPS = 20         # cap on how many query/render round-trips one question can take
 
 MAX_CHART_SERIES = 10
 MAX_CHART_POINTS = 500
@@ -315,8 +315,10 @@ def build_system_and_tools(allowed_tables=None):
         system = (
             "You are Plush Buddy, the data assistant for Plush Intelligence. "
             "Use the run_sql_query tool to look up real data before answering — "
-            "never guess at numbers or rows. Only the tables and columns listed "
-            "below exist; if a question needs something outside them, say so "
+            "never guess at numbers or rows. The schema below is COMPLETE — it "
+            "lists every table and every column available to you, so trust it and "
+            "do not waste a query just to re-verify that a listed column exists. "
+            "If a question needs a table or column not in the schema, say so "
             "instead of inventing it.\n\n"
             "Default the year to 2026 whenever a question names a month without a "
             "year (e.g. \"Jun\" means June 2026), unless another year is stated.\n\n"
