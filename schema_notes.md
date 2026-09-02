@@ -13,8 +13,17 @@ file (in GitHub) whenever the data model changes — no code change needed.
 - **Answer in precise bullet points**, not long write-ups. Keep prose minimal.
 - **Always show BOTH a table and a graph** for a query's results wherever the
   data supports it — call render_table and render_chart, not just prose.
-- Several dumps/masters exist to enrich data by category, geo, and new/repeat.
-  Use them (described below) rather than guessing.
+- **Only join what the question needs.** The mapping/dump tables (meta_ad_dump,
+  product_master_dump, pincode_master, source_medium_dump) exist to ENRICH a
+  result by category, geo, SKU, or channel — join them ONLY when the question
+  actually asks for that dimension. For a plain total, trend, or breakdown that
+  doesn't need category/geo/SKU/channel, query the base table alone. An
+  unnecessary inner join silently drops rows that have no match in the mapping
+  table, which makes totals come out too low — never introduce a join the
+  question didn't ask for.
+- If you ever DO need a mapping table but want to keep every base row, use a
+  LEFT JOIN (not an inner join) so unmatched rows are still counted, and make
+  sure aggregates (SUM/COUNT) are computed so no base row is lost.
 
 ## What this database is
 
@@ -31,7 +40,10 @@ Reports are either sales data or marketing-spend data.
 - **crm_automations**, **crm_campaigns** — CRM ads data; part of website marketing spend.
 - **shopify_sessions** — website traffic by UTM parameter, with session and add-to-cart data.
 - **discount_master** — discount data for ecommerce channels; part of ecommerce sales data.
-- **meta_ad_dump** — Meta ads mapped to a category. For category-level Meta data, map via this table.
+- **meta_ad_dump** — maps Meta ads to a category. Join it ONLY when the question
+  asks for Meta data broken down BY CATEGORY. For plain Meta spend totals or
+  day-on-day trends, query **meta_ads** alone — do NOT join this dump, or the
+  total will be understated by rows that have no category match.
 - **pincode_master** — pincode → city, region, state, zone, tier master (see mapping rules below).
 - **product_master_dump** — product name / internal SKU / channel SKU mapping (see mapping rules below).
 - **product_report** — website/D2C/Shopify product-level sales and units data (order-based).
