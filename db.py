@@ -13,13 +13,20 @@ SCHEMA_CACHE_TTL_SECONDS = 300  # re-check the real schema at most every 5 minut
 # Defense-in-depth on top of your read-only DB user: even if that user's
 # grants were ever misconfigured, these checks stop write/DDL statements
 # and multi-statement injection before a query ever reaches the database.
+# Block write/DDL statements. Each is anchored so it only matches the KEYWORD
+# form (a statement), not a same-named SQL function used inside a SELECT.
+# e.g. REPLACE(col,' ','') is a harmless string function and must be allowed,
+# while REPLACE INTO ... is a write and must be blocked.
 _FORBIDDEN = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|"
-    r"replace|call|exec|execute|merge|into\s+outfile|load_file)\b",
+    r"\b(insert\s+into|insert\s+ignore|update\s+\w|delete\s+from|drop\s+|"
+    r"alter\s+|create\s+|truncate\s+|grant\s+|revoke\s+|replace\s+into|"
+    r"call\s+|exec\s+|execute\s+|merge\s+into|into\s+outfile|into\s+dumpfile|load_file\s*\()",
     re.IGNORECASE,
 )
 _LIMIT_RE = re.compile(r"\blimit\s+\d+", re.IGNORECASE)
-_SELECT_OR_CTE = re.compile(r"^(select|with)\b", re.IGNORECASE)
+# Allow an optional opening parenthesis / whitespace before SELECT or WITH, so
+# parenthesized queries like (SELECT ...) UNION (SELECT ...) are accepted.
+_SELECT_OR_CTE = re.compile(r"^[\s(]*(select|with)\b", re.IGNORECASE)
 
 ROW_CAP = 200
 
@@ -62,7 +69,7 @@ def get_all_table_names():
     return insp.get_table_names()
 
 
-def get_schema_context(max_tables: int = 40, max_cols_per_table: int = 25,
+def get_schema_context(max_tables: int = 200, max_cols_per_table: int = 200,
                        allowed_tables=None) -> str:
     """Return a compact text description of the database's tables and columns,
     used to tell Claude what it's allowed to query. Cached for
